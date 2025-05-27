@@ -6,7 +6,8 @@
  */
 package cmp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import ocp._
 import patmos.Constants._
 
@@ -14,28 +15,16 @@ import scala.collection.mutable
 
 class AsyncMutexIO extends Bundle
 {
-  val req1 = Bool(INPUT)
-  val req2 = Bool(INPUT)
-  val gnt1 = Bool(OUTPUT)
-  val gnt2 = Bool(OUTPUT)
+  val req1 = Input(Bool())
+  val req2 = Input(Bool())
+  val gnt1 = Output(Bool())
+  val gnt2 = Output(Bool())
 
   override def clone = new AsyncMutexIO().asInstanceOf[this.type]
 }
 
-class AsyncMutexBB() extends BlackBox {
+class AsyncMutex extends BlackBox {
   val io = new AsyncMutexIO()
-  //throw new Error("BlackBox wrapper for AsyncMuteX in AsyncLock.scala needs update for Chisel 3")
-  // rename component
-  // should be Commented out to compile for chisel3
-  /*setModuleName("AsyncMutex")
-
-  renameClock(clock, "clk")
-  renameReset("rst")
-
-  io.req1.setName("req1")
-  io.req2.setName("req2")
-  io.gnt1.setName("gnt1")
-  io.gnt2.setName("gnt2")*/
 }
 
 class AsyncArbiterMesh(corecnt: Int) extends AsyncArbiterBase(corecnt) {
@@ -71,12 +60,11 @@ class AsyncArbiterMesh(corecnt: Int) extends AsyncArbiterBase(corecnt) {
 
     val seq = genset(IndexedSeq(), 1)
 
-    if(seq.isEmpty)
-      throwException("Should not happen!")
+    require(seq.nonEmpty, "Should not happen!")
     for(tup <- seq) {
       avail = avail.filter(e => e != tup)
 
-      val mutex = Module(new AsyncMutexBB())
+      val mutex = Module(new AsyncMutex())
 
       mutex.io.req1 := ins(tup._1)
       ins(tup._1) = mutex.io.gnt1
@@ -94,7 +82,7 @@ class AsyncArbiterMesh(corecnt: Int) extends AsyncArbiterBase(corecnt) {
   }
 }
 
-class AsyncLock(corecnt: Int, lckcnt: Int, fair: Boolean = false) extends Module {
+class AsyncLock(corecnt: Int, lckcnt: Int, fair: Boolean = false) extends CmpDevice(corecnt) {
 
   val arbiters =
     if(!fair)
@@ -105,48 +93,47 @@ class AsyncLock(corecnt: Int, lckcnt: Int, fair: Boolean = false) extends Module
       arb
     })
     else
-      (0 until lckcnt).map(i => Module(new AsyncArbiterMesh(corecnt)))
+      Seq.fill(lckcnt)(Module(new AsyncArbiterMesh(corecnt)))
 
-  val arbiterio = Vec(arbiters.map(e => e.io))
+  val arbiterio = arbiters.map(_.io)
 
   val io = IO(new CmpIO(corecnt)) //Vec(corecnt,new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))
 
   for (i <- 0 until corecnt) {
 
     val addr = io.cores(i).M.Addr(log2Up(lckcnt)-1+2, 2)
-    val acks = Bits(width = lckcnt)
-    acks := 0.U
-    val blck = acks.orR
+    val acks = WireDefault(VecInit.fill(lckcnt)(false.B))
+    val blck = acks.reduce(_ || _)
 
     for (j <- 0 until lckcnt) {
-      val reqReg = Reg(init = Bool(false))
+      val reqReg = RegInit(init = false.B)
       arbiterio(j).cores(i).req := reqReg
-      val ackReg = Reg(next = Reg(next = arbiterio(j).cores(i).ack))
+      val ackReg = RegNext(next = RegNext(next = arbiterio(j).cores(i).ack))
       acks(j) := ackReg =/= reqReg
 
       when(addr === j.U) {
         when(io.cores(i).M.Cmd === OcpCmd.RD) {
-          reqReg := Bool(true)
+          reqReg := true.B
         }.elsewhen(io.cores(i).M.Cmd === OcpCmd.WR) {
-          reqReg := Bool(false)
+          reqReg := false.B
         }
       }
     }
 
-    val dvaReg = Reg(init = Bool(false))
+    val dvaReg = RegInit(init = false.B)
 
     when(io.cores(i).M.Cmd =/= OcpCmd.IDLE) {
-      dvaReg := Bool(true)
-    }.elsewhen(dvaReg === Bool(true) && !blck) {
-      dvaReg := Bool(false)
+      dvaReg := true.B
+    }.elsewhen(dvaReg === true.B && !blck) {
+      dvaReg := false.B
     }
 
     io.cores(i).S.Resp := OcpResp.NULL
-    when(dvaReg === Bool(true) && !blck) {
+    when(dvaReg === true.B && !blck) {
       io.cores(i).S.Resp := OcpResp.DVA
     }
 
     // Perhaps remove this
-    io.cores(i).S.Data := UInt(0)
+    io.cores(i).S.Data := 0.U
   }
 }

@@ -8,7 +8,8 @@
 
 package sspm
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
 
@@ -27,15 +28,15 @@ class SSPMAegean(val nCores: Int,
 
   //override val io = new CoreDeviceIO()
 
-  val io = IO(new CmpIO(nCores)) //Vec.fill(nCores) { new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH) }
+  val io = IO(new CmpIO(nCores))
 
   // Generate modules
   val mem = Module(new memSPM(16384))
-  val connectors = Vec.fill(nCores) { Module(new SSPMConnector()).io }
+  val connectors = VecInit(Seq.fill(nCores)(Module(new SSPMConnector()).io)) // MS: shall this be really a Vec and not a Seq? | tjark: Yes, it is indexed with a UInt in line 52-55
 
   val firstCore = 0
-  val nextCore = Reg(init = UInt(firstCore + 1, log2Up(nCores)))
-  val currentCore = Reg(init = UInt(firstCore, log2Up(nCores)))
+  val nextCore = RegInit(init = (firstCore + 1).U(log2Up(nCores).W))
+  val currentCore = RegInit(init = firstCore.U(log2Up(nCores).W))
   val decoder = UIntToOH(currentCore, nCores)
 
   // Connect the SSPMConnector with the SSPMAegean
@@ -45,7 +46,7 @@ class SSPMAegean(val nCores: Int,
       connectors(j).connectorSignals.S.Data := mem.io.S.Data
 
     // Enable connectors based upon one-hot coding of scheduler
-    connectors(j).connectorSignals.enable := Bits(0)
+    connectors(j).connectorSignals.enable := 0.U
   }
 
   mem.io.M.Data := connectors(currentCore).connectorSignals.M.Data
@@ -55,63 +56,63 @@ class SSPMAegean(val nCores: Int,
 
   // Synchronization state machine
 
-  val s_idle :: s_sync :: Nil = Enum(UInt(), 2)
+  val s_idle :: s_sync :: Nil = Enum(2)
 
-  val state = Reg(init = s_idle)
-  val syncCounter = Reg(init = UInt(0))
+  val state = RegInit(init = s_idle)
+  val syncCounter = RegInit(init = 0.U)
   syncCounter := syncCounter
 
-  val syncUsed = Reg(init = Bool(false))
-  val syncCore = Reg(init = UInt(0))
+  val syncUsed = RegInit(init = false.B)
+  val syncCore = RegInit(init = 0.U)
 
   when(state === s_idle) {
     state := s_idle
-    nextCore := nextCore + UInt(1)
+    nextCore := nextCore + 1.U
     currentCore := nextCore
-    connectors(currentCore).connectorSignals.enable := Bits(1)
+    connectors(currentCore).connectorSignals.enable := 1.U
 
-    when(connectors(currentCore).connectorSignals.syncReq === Bits(1)) {
+    when(connectors(currentCore).connectorSignals.syncReq === 1.U) {
       if(singleExtendedSlot) {
         when(!syncUsed) {
-          syncCounter := UInt(extendedSlotSize - 1)
+          syncCounter := (extendedSlotSize - 1).U
           nextCore := nextCore
           currentCore := currentCore
           state := s_sync
         }.otherwise {
-          connectors(currentCore).connectorSignals.enable := Bits(0)
+          connectors(currentCore).connectorSignals.enable := 0.U
         }
       } else {
-        syncCounter := UInt(extendedSlotSize - 1)
+        syncCounter := (extendedSlotSize - 1).U
         nextCore := nextCore
         currentCore := currentCore
         state := s_sync
       }
     }
 
-    when(nextCore > UInt(nCores - 1)) {
-      nextCore := UInt(0)
+    when(nextCore > (nCores - 1).U) {
+      nextCore := 0.U
     }
 
     if(singleExtendedSlot) {
       when(currentCore === syncCore) {
-        syncUsed := Bool(false)
+        syncUsed := false.B
       }
     }
   }
 
   when(state === s_sync) {
 
-    syncCounter := syncCounter - UInt(1)
+    syncCounter := syncCounter - 1.U
     if(singleExtendedSlot) {
-      syncUsed := Bool(true)
+      syncUsed := true.B
       syncCore := currentCore
     }
-    connectors(currentCore).connectorSignals.enable := Bits(1)
+    connectors(currentCore).connectorSignals.enable := 1.U
 
     state := s_sync
 
-    when(syncCounter === UInt(0)) {
-      nextCore := nextCore + UInt(1)
+    when(syncCounter === 0.U) {
+      nextCore := nextCore + 1.U
       currentCore := nextCore
       state := s_idle
     }
@@ -131,10 +132,10 @@ object SSPMAegeanMain {
     val singleExtendedSlot = "true" // args(2)
     chiselArgs.foreach(println)
 
-    chiselMain(chiselArgs, () => Module(new SSPMAegean(
-        nCores.toInt,
-        extendedSlotSize.toInt,
-        Try(singleExtendedSlot.toBoolean).getOrElse(false))))
+    emitVerilog(new SSPMAegean(
+      nCores.toInt,
+      extendedSlotSize.toInt,
+      Try(singleExtendedSlot.toBoolean).getOrElse(false)), chiselArgs)
   }
 }
 

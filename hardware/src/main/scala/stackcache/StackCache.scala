@@ -41,24 +41,17 @@
 
 package stackcache
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import ocp._
 import patmos._
 import patmos.Constants._
 
-class StackCache() extends Module {
-  val io = new StackCacheIO() {
-    // slave to cpu
-    val fromCPU = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
-    // master to memory
-    val toMemory = new OcpBurstMasterPort(ADDR_WIDTH, DATA_WIDTH, BURST_LENGTH)
+class StackCache() extends StackCacheType {
 
-    val perf = new StackCachePerf()
-  }
-
-  io.perf.spill := Bool(false)
-  io.perf.fill := Bool(false)
+  io.perf.spill := false.B
+  io.perf.fill := false.B
 
   // number of bits needed to address the bytes of a word
   val wordBits = Chisel.log2Up(BYTES_PER_WORD)
@@ -70,62 +63,62 @@ class StackCache() extends Module {
   val scSizeBits = Chisel.log2Up(SCACHE_SIZE / BYTES_PER_WORD)
 
   // stateReg machine to manage spilling and filling
-  val idleState :: fillState :: waitFillState :: spillState :: holdSpillState :: waitSpillState :: errorState :: Nil = Enum(UInt(), 7)
-  val stateReg = Reg(init = idleState)
+  val idleState :: fillState :: waitFillState :: spillState :: holdSpillState :: waitSpillState :: errorState :: Nil = Enum(7)
+  val stateReg = RegInit(init = idleState)
 
   // chose between sres and sspill
   val isReserveReg = Reg(Bool())
 
   // stack top pointer
-  val stackTopReg = Reg(UInt(width = DATA_WIDTH))
+  val stackTopReg = Reg(UInt(DATA_WIDTH.W))
 
   // memory top pointer
-  val memTopReg = Reg(UInt(width = DATA_WIDTH))
+  val memTopReg = Reg(UInt(DATA_WIDTH.W))
 
   // temporary address used during filling/spilling 
-  val transferAddrReg = Reg(UInt(width = ADDR_WIDTH+1))
+  val transferAddrReg = Reg(UInt((ADDR_WIDTH+1).W))
 
   // temporary address used during filling/spilling
-  val newMemTopReg = Reg(UInt(width = DATA_WIDTH))
+  val newMemTopReg = Reg(UInt(DATA_WIDTH.W))
 
   // the actual memory of the stack cache
   val memoryBlock = new Array[MemBlockIO](BYTES_PER_WORD)
   for (i <- 0 until BYTES_PER_WORD) {
-    memoryBlock(i) = MemBlock(SCACHE_SIZE / BYTES_PER_WORD, BYTE_WIDTH, bypass = false).io
+    memoryBlock(i) = MemBlock(SCACHE_SIZE / BYTES_PER_WORD, BYTE_WIDTH).io
   }
 
-  val mb_rdAddr = Wire(UInt(width = scSizeBits))
+  val mb_rdAddr = Wire(UInt(scSizeBits.W))
   val mb_rdData = memoryBlock.map(_.rdData).reduceLeft((x,y) => y ## x)
-  val mb_wrAddr = Wire(UInt(width = scSizeBits))
-  val mb_wrEna = Wire(UInt(width = BYTES_PER_WORD))
-  val mb_wrData = Wire(UInt(width = DATA_WIDTH))
+  val mb_wrAddr = Wire(UInt(scSizeBits.W))
+  val mb_wrEna = Wire(UInt(BYTES_PER_WORD.W))
+  val mb_wrData = Wire(UInt(DATA_WIDTH.W))
 
   // register addr for MemBlock
-  val rdAddrReg = Reg(next = memoryBlock(0).rdAddr)
+  val rdAddrReg = RegNext(next = memoryBlock(0).rdAddr)
 
   // response to CPU for read/write requests
-  val responseToCPUReg = Reg(init = OcpResp.NULL)
+  val responseToCPUReg = RegInit(init = OcpResp.NULL)
 
   // write enable for data that actually needs spilling
   val writeEnable = Mux(isReserveReg,
-                        ((stackTopReg + UInt(SCACHE_SIZE)) <= transferAddrReg) && (transferAddrReg < memTopReg),
+                        ((stackTopReg + SCACHE_SIZE.U) <= transferAddrReg) && (transferAddrReg < memTopReg),
                         (newMemTopReg <= transferAddrReg) && (transferAddrReg < memTopReg))
 
   io.stall := stateReg =/= idleState
-  io.illMem := Bool(false)
+  io.illMem := false.B
 
   // default OCP "request"
   io.toMemory.M.Cmd := OcpCmd.IDLE
   io.toMemory.M.Addr := transferAddrReg
   io.toMemory.M.Data := mb_rdData
-  io.toMemory.M.DataValid := UInt(0)
+  io.toMemory.M.DataValid := 0.U
   io.toMemory.M.DataByteEn := Fill(BYTES_PER_WORD, writeEnable)
 
   // default signals for the stack cache's memory
   val relAddr = (io.fromCPU.M.Addr + stackTopReg)(scSizeBits + wordBits - 1, wordBits)
   mb_rdAddr := relAddr
   mb_wrAddr := relAddr
-  mb_wrEna  := UInt(0)
+  mb_wrEna  := 0.U
   mb_wrData := io.fromCPU.M.Data
 
   // signals to execute stage
@@ -163,7 +156,7 @@ class StackCache() extends Module {
         }
         is(sc_OP_ENS) {
           // start transfer from the current memory top pointer on
-          transferAddrReg := memTopReg(ADDR_WIDTH - 1, burstBits) ## Fill(burstBits, UInt("b0"))
+          transferAddrReg := memTopReg(ADDR_WIDTH - 1, burstBits) ## Fill(burstBits, "b0".U)
 
           // update memory top pointer
           newMemTopReg := stackTopInc
@@ -181,28 +174,28 @@ class StackCache() extends Module {
         }
         is(sc_OP_RES) {
           // register type of instruction
-          isReserveReg := Bool(true)
+          isReserveReg := true.B
           // decrement the stack top pointer
           val nextStackTop = stackTopReg - io.exsc.opOff
           stackTopReg := nextStackTop
           // start transfer from the current stack pointer + SCACHE_SIZE
           val nextTransferAddr =
-            (nextStackTop + UInt(SCACHE_SIZE))(ADDR_WIDTH-1, burstBits) ## Fill(burstBits, UInt("b0"))
+            (nextStackTop + SCACHE_SIZE.U)(ADDR_WIDTH-1, burstBits) ## Fill(burstBits, "b0".U)
           // start reading from the stack cache's memory
           mb_rdAddr := nextTransferAddr(scSizeBits + wordBits - 1, wordBits)
           // store transfer address in a register
           transferAddrReg := nextTransferAddr
           // check if spilling is actually needed
-          val needsSpill = (memTopReg - nextStackTop) > UInt(SCACHE_SIZE)
+          val needsSpill = (memTopReg - nextStackTop) > SCACHE_SIZE.U
           stateReg := Mux(needsSpill, holdSpillState, idleState)
         }
         is (sc_OP_SPILL) {
           // register type of instruction
-          isReserveReg := Bool(false)
+          isReserveReg := false.B
           // start transfer from the current mem top - offset
           val nextNewMemTop = memTopReg - io.exsc.opOff
           val nextTransferAddr = 
-            nextNewMemTop(ADDR_WIDTH-1, burstBits) ## Fill(burstBits, UInt("b0"))
+            nextNewMemTop(ADDR_WIDTH-1, burstBits) ## Fill(burstBits, "b0".U)
           // start reading from the stack cache's memory
           mb_rdAddr := nextTransferAddr(scSizeBits + wordBits - 1, wordBits)
           // store transfer address in a register
@@ -219,14 +212,14 @@ class StackCache() extends Module {
      * SPILLING
      */
     is(holdSpillState) {
-      val nextTransferAddr = transferAddrReg + UInt(BYTES_PER_WORD)
+      val nextTransferAddr = transferAddrReg + BYTES_PER_WORD.U
 
       // generate an OCP write request
       io.toMemory.M.Cmd := OcpCmd.WR
-      io.toMemory.M.DataValid := UInt(1)
+      io.toMemory.M.DataValid := 1.U
 
       // check if command has been accepted
-      val accepted = io.toMemory.S.CmdAccept === Bits(1)
+      val accepted = io.toMemory.S.CmdAccept === 1.U
 
       // read next data element once accepted, otherwise hold
       mb_rdAddr := Mux(accepted, nextTransferAddr(scSizeBits + wordBits - 1, wordBits), rdAddrReg)
@@ -238,23 +231,23 @@ class StackCache() extends Module {
       stateReg := Mux(accepted, spillState, holdSpillState)
 
       when (accepted) {
-        io.perf.spill := Bool(true)
+        io.perf.spill := true.B
       }
     }
 
     is(spillState) {
-      val nextTransferAddr = transferAddrReg + UInt(BYTES_PER_WORD)
+      val nextTransferAddr = transferAddrReg + BYTES_PER_WORD.U
 
       // read next data element from the stack cache's memory
       mb_rdAddr := nextTransferAddr(scSizeBits + wordBits - 1, wordBits)
 
       // hand current data element over to the OCP bus
-      io.toMemory.M.DataValid := UInt(1)
+      io.toMemory.M.DataValid := 1.U
 
       // increment transfer address and advance stateReg
       transferAddrReg := nextTransferAddr
 
-      stateReg := Mux(burstCounter === UInt(BURST_LENGTH - 1),
+      stateReg := Mux(burstCounter === (BURST_LENGTH - 1).U,
         waitSpillState, spillState)
     }
 
@@ -273,7 +266,7 @@ class StackCache() extends Module {
       // done? finally compute the new memory top pointer
       memTopReg := Mux(spillingDone,
                        Mux(isReserveReg,
-                           stackTopReg + UInt(SCACHE_SIZE),
+                           stackTopReg + SCACHE_SIZE.U,
                            newMemTopReg),
                        memTopReg)
 
@@ -289,13 +282,13 @@ class StackCache() extends Module {
       io.toMemory.M.Cmd := OcpCmd.RD
 
       // check if command has been accepted
-      val accepted = io.toMemory.S.CmdAccept === Bits(1)
+      val accepted = io.toMemory.S.CmdAccept === 1.U
 
       // go to next stateReg
       stateReg := Mux(accepted, waitFillState, fillState)
 
       when (accepted) {
-        io.perf.fill := Bool(true)
+        io.perf.fill := true.B
       }
     }
 
@@ -314,10 +307,10 @@ class StackCache() extends Module {
         mb_wrAddr := transferAddrReg.apply(scSizeBits + wordBits - 1, wordBits)
 
         // increment transfer address
-        transferAddrReg := transferAddrReg + UInt(BYTES_PER_WORD)
+        transferAddrReg := transferAddrReg + BYTES_PER_WORD.U
 
         // go to next stateReg
-        stateReg := Mux(burstCounter === UInt(BURST_LENGTH - 1),
+        stateReg := Mux(burstCounter === (BURST_LENGTH - 1).U,
           Mux(fillingDone, idleState, fillState),
           waitFillState)
 
@@ -327,7 +320,7 @@ class StackCache() extends Module {
 
       // abort on error response
       when(io.toMemory.S.Resp === OcpResp.ERR)  {
-        transferAddrReg := transferAddrReg + UInt(BYTES_PER_WORD)
+        transferAddrReg := transferAddrReg + BYTES_PER_WORD.U
         stateReg := errorState
       }
     }
@@ -335,10 +328,10 @@ class StackCache() extends Module {
     is(errorState) {
       // wait for end of transaction and signal illegal memory access
       when (io.toMemory.S.Resp =/= OcpResp.NULL) {
-        transferAddrReg := transferAddrReg + UInt(BYTES_PER_WORD)
+        transferAddrReg := transferAddrReg + BYTES_PER_WORD.U
       }
-      when (burstCounter === UInt(BURST_LENGTH - 1)) {
-        io.illMem := Bool(true)
+      when (burstCounter === (BURST_LENGTH - 1).U) {
+        io.illMem := true.B
         stateReg := idleState
       }
     }

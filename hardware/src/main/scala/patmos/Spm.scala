@@ -17,7 +17,8 @@
 
 package patmos
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import Constants._
 
@@ -29,20 +30,20 @@ class Spm(size: Int) extends Module {
   val addrUInt = log2Up(size / BYTES_PER_WORD)
 
   // respond and return (dummy) data
-  val cmdReg = Reg(next = io.M.Cmd)
+  val cmdReg = RegNext(next = io.M.Cmd)
   io.S.Resp := Mux(cmdReg === OcpCmd.WR || cmdReg === OcpCmd.RD,
                    OcpResp.DVA, OcpResp.NULL)
-  io.S.Data := UInt(0)
+  io.S.Data := 0.U
 
   if (size > 0) {
     // generate byte memories
     val mem = new Array[MemBlockIO](BYTES_PER_WORD)
     for (i <- 0 until BYTES_PER_WORD) {
-      mem(i) = MemBlock(size / BYTES_PER_WORD, BYTE_WIDTH, bypass = false).io
+      mem(i) = MemBlock(size / BYTES_PER_WORD, BYTE_WIDTH).io
     }
 
     // store
-    val stmsk = Mux(io.M.Cmd === OcpCmd.WR, io.M.ByteEn,  UInt(0))
+    val stmsk = Mux(io.M.Cmd === OcpCmd.WR, io.M.ByteEn,  0.U)
     for (i <- 0 until BYTES_PER_WORD) {
       mem(i) <= (stmsk(i), io.M.Addr(addrUInt + 1, 2),
                  io.M.Data(BYTE_WIDTH*(i+1)-1, BYTE_WIDTH*i))

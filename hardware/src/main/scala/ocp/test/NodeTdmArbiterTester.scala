@@ -7,7 +7,7 @@
 
 package ocp.test
 
-import Chisel._
+import chisel3._
 import ocp._
 import io.SSRam32Ctrl
 
@@ -18,47 +18,47 @@ import io.SSRam32Ctrl
     val port = new OcpBurstMasterPort(32, 32, burstLength)
   }
 
-  val cntReg = Reg(init = UInt(0, width=8))
+  val cntReg = Reg(init = 0.U(8.W))
 
   io.port.M.Cmd := OcpCmd.IDLE
-  io.port.M.DataValid := Bits(0)
-  io.port.M.DataByteEn := Bits(15)
+  io.port.M.DataValid := 0.U
+  io.port.M.DataByteEn := 15.U
 
-  cntReg := cntReg + UInt(1)
+  cntReg := cntReg + 1.U
   switch(cntReg) {
-    is(UInt(1)) {
+    is(1.U) {
       io.port.M.Cmd := OcpCmd.WR
-      io.port.M.DataValid := Bits(1)
-      when (io.port.S.CmdAccept === Bits(0)) {
+      io.port.M.DataValid := 1.U
+      when (io.port.S.CmdAccept === 0.U) {
         cntReg := cntReg
       }
     }
-    is(UInt(2)) {
-      io.port.M.DataValid := Bits(1)
+    is(2.U) {
+      io.port.M.DataValid := 1.U
     }
-    is(UInt(3)) {
-      io.port.M.DataValid := Bits(1)
+    is(3.U) {
+      io.port.M.DataValid := 1.U
     }
     // now we should be on our last word - wait for DVA
-    is(UInt(4)) {
-      io.port.M.DataValid := Bits(1)
+    is(4.U) {
+      io.port.M.DataValid := 1.U
       when (io.port.S.Resp != OcpResp.DVA) {
         cntReg := cntReg
       }
     }
-    is(UInt(5)) { io.port.M.Cmd := OcpCmd.IDLE }
-    is(UInt(6)) { io.port.M.Cmd := OcpCmd.RD }
+    is(5.U) { io.port.M.Cmd := OcpCmd.IDLE }
+    is(6.U) { io.port.M.Cmd := OcpCmd.RD }
   }
 
-  io.port.M.Addr := (UInt(nr * 256) + cntReg).toBits()
-  io.port.M.Data := (UInt(nr * 256 * 16) + cntReg).toBits()
+  io.port.M.Addr := ((nr * 256).U + cntReg).toBits()
+  io.port.M.Data := ((nr * 256 * 16).U + cntReg).toBits()
 } */
 
 /** A top level to test the arbiter */
 class NodeTdmArbiterTop() extends Module {
 
   val io = IO(new Bundle {
-    val port = Vec.fill(3){new OcpBurstMasterPort(32, 32, 4)}
+    val port = VecInit(Seq.fill(3)(new OcpBurstMasterPort(32, 32, 4))) //TODO: this should pronanly a plain Scala Seq, or maybe not
   })
   val CNT = 3
   //val arb = Module(new ocp.NodeTdmArbiter(CNT, 32, 32, 4))
@@ -67,7 +67,7 @@ class NodeTdmArbiterTop() extends Module {
 
   for (i <- 0 until CNT) {
     val m = Module(new Master(i, 4))
-    val nodeID = UInt(i, width=6)
+    val nodeID = i.U(6.W)
     val arb = Module(new ocp.NodeTdmArbiter(CNT, 32, 32, 4, 16))
     arb.io.master <> m.io.port
     arb.io.node := nodeID

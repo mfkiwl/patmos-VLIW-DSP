@@ -16,7 +16,7 @@ APP?=hello_puts
 # Altera FPGA configuration cables
 #BLASTER_TYPE=ByteBlasterMV
 #BLASTER_TYPE=Arrow-USB-Blaster
-#BLASTER_TYPE?=DE-SoC 
+#BLASTER_TYPE?=DE-SoC
 BLASTER_TYPE?=USB-Blaster
 
 # Path delimiter for Wdoz and others
@@ -45,22 +45,29 @@ CTOOLSBUILDDIR?=$(CURDIR)/tools/c/build
 JAVATOOLSBUILDDIR?=$(CURDIR)/tools/java/build
 SCRIPTSBUILDDIR?=$(CURDIR)/tools/scripts/build
 HWBUILDDIR?=$(CURDIR)/hardware/build
+HWEMUBUILDDIR?=$(HWBUILDDIR)emu
 # Where to install tools
 INSTALLDIR?=$(CURDIR)/../local
 HWINSTALLDIR?=$(INSTALLDIR)
+export LF_PROJECT_ROOT:=$(CURDIR)/c/apps/lf-workspace/hello
+export LF_MAIN_TARGET:=$(APP)
+
+# Quick fix for Mac OS X
+# How are include paths handled these days in *nix? CMake?
+#ifeq ($(TERM_PROGRAM),$(filter $(TERM_PROGRAM), Apple_Terminal iTerm.app))
+	INC_EXTRA=-I /opt/homebrew/include -I /opt/homebrew/include/libelf -L /opt/homebrew/lib
+#else
+#	INC_EXTRA=
+#endif
 
 all: tools emulator patmos
-
 
 tools: elf2bin javatools scripttools
 
 # Build tool to transform elf to binary
 elf2bin:
 	-mkdir -p $(CTOOLSBUILDDIR)
-	cd $(CTOOLSBUILDDIR) && cmake ..
-	cd $(CTOOLSBUILDDIR) && make
-	-mkdir -p $(INSTALLDIR)/bin
-	cp $(CTOOLSBUILDDIR)/src/elf2bin $(INSTALLDIR)/bin
+	gcc $(INC_EXTRA) -o $(INSTALLDIR)/bin/elf2bin tools/c/src/elf2bin.c -lelf 
 
 # Target for dependencies: build elf2bin only if it does not exist.
 $(INSTALLDIR)/bin/elf2bin:
@@ -100,19 +107,11 @@ $(JAVATOOLSBUILDDIR)/classes/%.class: tools/java/src/%.java
 	javac -classpath tools/lib/java-binutils-0.1.0.jar:tools/lib/jssc.jar \
 		-sourcepath tools/java/src -d $(JAVATOOLSBUILDDIR)/classes $<
 
-# Build the Chisel emulator
-#emulator: OLD
-#	-mkdir -p $(HWBUILDDIR)
-#	$(MAKE) -C hardware BOOTBUILDROOT=$(CURDIR) BOOTBUILDDIR=$(BUILDDIR) BOOTAPP=$(BOOTAPP) BOOTBIN=$(BUILDDIR)/$(BOOTAPP).bin BOARD=$(BOARD) emulator
-#	-mkdir -p $(HWINSTALLDIR)/bin
-#	cp $(HWBUILDDIR)/emulator $(HWINSTALLDIR)/bin/patemu
-
-# chisel3/verilator emulator
-CORECNTT:=$(shell lscpu | grep 'Core(s) per socket:')
+emulator: export HWBUILDDIR := $(HWEMUBUILDDIR)
 emulator:
 	-mkdir -p $(HWBUILDDIR)
-	$(MAKE) -C hardware verilog BOOTAPP=$(BOOTAPP) BOARD=$(BOARD)
-	-cd $(HWBUILDDIR) && verilator --cc ../harnessConfig.vlt Patmos.v --top-module Patmos +define+TOP_TYPE=VPatmos --threads 1 -CFLAGS "-Wno-undefined-bool-conversion -O1 -DTOP_TYPE=VPatmos -DVL_USER_FINISH -include VPatmos.h" -Mdir $(HWBUILDDIR) --exe ../Patmos-harness.cpp -LDFLAGS -lelf --trace   
+	$(MAKE) -C hardware verilog BOOTAPP=$(BOOTAPP) BOARD=$(BOARD) GENEMU=true
+	-cd $(HWBUILDDIR) && verilator --cc --exe -LDFLAGS "-L /opt/homebrew/lib -lelf" -CFLAGS "-I /opt/homebrew/include/libelf -I /opt/homebrew/include -Wno-undefined-bool-conversion -O3" --top-module Patmos -Mdir $(HWBUILDDIR) --trace-fst -Wno-MULTIDRIVEN Patmos.v ../Patmos-harness.cpp
 	-cd $(HWBUILDDIR) && make -j -f VPatmos.mk
 	-cp $(HWBUILDDIR)/VPatmos $(HWBUILDDIR)/emulator
 	-mkdir -p $(HWINSTALLDIR)/bin
@@ -158,6 +157,37 @@ app:
 
 .PRECIOUS: $(BUILDDIR)/%.elf
 
+app-wcet:
+	make wcet -C c/apps/$(APP)
+
+app-clean:
+	make clean -C c/apps/$(APP)
+
+pasim: 
+	pasim $(BUILDDIR)/$(APP).elf
+
+patemu: 
+	patemu $(BUILDDIR)/$(APP).elf
+	
+# Compile an lf app that lives in the lf-workspace folder
+lf-app:
+	-rm -rf $(LF_PROJECT_ROOT)/bin
+	-rm -rf $(LF_PROJECT_ROOT)/include
+	-rm -rf $(LF_PROJECT_ROOT)/src-gen
+	lfc $(LF_PROJECT_ROOT)/src/$(APP).lf
+	chmod +x $(LF_PROJECT_ROOT)/src/scripts/patmos_build.sh
+	$(LF_PROJECT_ROOT)/src/scripts/patmos_build.sh $(LF_PROJECT_ROOT) $(APP)
+	make -C $(LF_PROJECT_ROOT)/src-gen/$(APP) 
+	mkdir -p $(BUILDDIR)
+	cp $(LF_PROJECT_ROOT)/src-gen/$(APP)/$(APP).elf $(BUILDDIR)
+
+.PRECIOUS: $(BUILDDIR)/%.elf
+
+lf-clean:
+	make clean -C $(LF_PROJECT_ROOT)/src-gen/$(APP)
+
+lf-wcet:
+	make wcet -C c/apps/lf-workspace/hello/src-gen/$(APP)
 # High-level pasim simulation
 swsim: $(BUILDDIR)/$(BOOTAPP).bin
 	$(INSTALLDIR)/bin/pasim --debug --debug-fmt=short $(BUILDDIR)/$(BOOTAPP).bin; exit 0
@@ -176,6 +206,7 @@ test: test_compile test_emu
 test_compile:
 	make clean
 	make emulator
+	make synth
 
 test_emu:
 	testsuite/run.sh
@@ -235,15 +266,17 @@ fpgaexec: $(BUILDDIR)/$(APP).elf
 CLEANEXTENSIONS=rbf rpt sof pin summary ttf qdf dat wlf done qws
 
 mostlyclean:
-	-rm -rf $(CTOOLSBUILDDIR) $(BUILDDIR) $(HWBUILDDIR)
+	-rm -rf $(CTOOLSBUILDDIR) $(BUILDDIR) $(HWBUILDDIR) $(HWEMUBUILDDIR)
 	-rm -rf $(JAVATOOLSBUILDDIR)/classes
 	-rm -rf hardware/target
+	-rm $(HWINSTALLDIR)/bin/patemu
 
 clean: mostlyclean
 #	-rm -rf $(INSTALLDIR)/bin
 #	-rm -rf $(INSTALLDIR)/lib
 	-rm -rf $(JAVATOOLSBUILDDIR)/lib
 	-rm -rf $(HWBUILDDIR)
+	-rm -rf $(HWEMUBUILDDIR)
 	-rm -rf $(CURDIR)/hardware/emulator_config.h
 	for ext in $(CLEANEXTENSIONS); do \
 		find `ls` -name \*.$$ext -print -exec rm -r -f {} \; ; \

@@ -8,20 +8,23 @@
 
 package patmos
 
-import Chisel._
+import util.SRAM
+
+import chisel3._
+import chisel3.util._
 
 object MemBlock {
-  def apply(size : Int, width : Int, bypass : Boolean = true) = {
-    Module(new MemBlock(size, width, bypass))
+  def apply(size : Int, width : Int) = {
+    Module(new MemBlock(size, width))
   }
 }
 
 class MemBlockIO(size : Int, width : Int) extends Bundle {
-  val rdAddr = UInt(INPUT, log2Up(size))
-  val rdData = UInt(OUTPUT, width)
-  val wrAddr = UInt(INPUT, log2Up(size))
-  val wrEna  = UInt(INPUT, 1)
-  val wrData = UInt(INPUT, width)
+  val rdAddr = Input(UInt(log2Up(size).W))
+  val rdData = Output(UInt(width.W))
+  val wrAddr = Input(UInt(log2Up(size).W))
+  val wrEna  = Input(UInt(1.W))
+  val wrData = Input(UInt(width.W))
 
   var read = false
   var write = false
@@ -46,25 +49,40 @@ class MemBlockIO(size : Int, width : Int) extends Bundle {
   }
 }
 
-class MemBlock(size : Int, width : Int, bypass : Boolean = true) extends Module {
-  val io = new MemBlockIO(size, width)
-  val mem = Mem(UInt(width = width), size)
+class MemBlock(size : Int, width : Int) extends Module {
+  val io = IO(new MemBlockIO(size, width))
 
-  // write
-  when(io.wrEna === UInt(1)) {
-    mem(io.wrAddr) := io.wrData
+  // switch between chisel SyncReadMem and SRAM using a verilog model
+  val useSimSRAM = false
+
+  val memData = Wire(UInt(width.W))
+
+  if(useSimSRAM) {
+
+    val mem = Module(new SRAM(size, width))
+
+    mem.io.rdAddr := io.rdAddr
+    mem.io.wrAddr := io.wrAddr
+    mem.io.wrData := io.wrData
+    mem.io.wrEna := io.wrEna.asBool
+    memData := mem.io.rdData
+
+  } else {
+
+    val mem = SyncReadMem(size, UInt(width.W), SyncReadMem.ReadFirst)
+    // write
+    when(io.wrEna.asBool) {
+      mem.write(io.wrAddr, io.wrData)
+    }
+    // read
+    memData := mem.read(io.rdAddr)
+
   }
 
-  // read
-  val rdAddrReg = Reg(next = io.rdAddr)
-  io.rdData := mem(rdAddrReg)
+  // bypass for read during write
+  val wrDataReg = RegNext(io.wrData)
+  val doForwardingReg = RegNext(io.wrAddr === io.rdAddr && io.wrEna.asBool)
+  io.rdData := Mux(doForwardingReg, wrDataReg, memData)
 
-  if (bypass) {
-    // force read during write behavior
-    when (Reg(next = io.wrEna) === UInt(1) &&
-          Reg(next = io.wrAddr) === rdAddrReg) {
-            io.rdData := Reg(next = io.wrData)
-          }
-  }
 }
 

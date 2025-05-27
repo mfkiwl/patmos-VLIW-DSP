@@ -8,7 +8,8 @@
 
 package io
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
 
@@ -26,34 +27,34 @@ object Timer extends DeviceObject {
 class Timer(clk_freq: Int) extends CoreDevice() {
 
   override val io = IO(new CoreDeviceIO() with patmos.HasInterrupts {
-    override val interrupts = Vec(2, Bool(OUTPUT) )
+    override val interrupts = Vec(2, Output(Bool()) )
   })
 
-  val masterReg = Reg(next = io.ocp.M)
+  val masterReg = RegNext(next = io.ocp.M)
 
   // Register for cycle counter
-  val cycleReg     = Reg(init = UInt(0, 2*DATA_WIDTH))
-  val cycleIntrReg = Reg(init = UInt(0, 2*DATA_WIDTH))
+  val cycleReg     = RegInit(init = 0.U((2*DATA_WIDTH).W))
+  val cycleIntrReg = RegInit(init = 0.U((2*DATA_WIDTH).W))
 
   // Registers for usec counter
-  val cycPerUSec  = UInt(clk_freq/1000000)
-  val usecSubReg  = Reg(init = UInt(0, log2Up(clk_freq/1000000)))
-  val usecReg     = Reg(init = UInt(0, 2*DATA_WIDTH))
-  val usecIntrReg = Reg(init = UInt(0, 2*DATA_WIDTH))
+  val cycPerUSec  = (clk_freq/1000000).U
+  val usecSubReg  = RegInit(init = 0.U(log2Up(clk_freq/1000000).W))
+  val usecReg     = RegInit(init = 0.U((2*DATA_WIDTH).W))
+  val usecIntrReg = RegInit(init = 0.U((2*DATA_WIDTH).W))
 
   // Registers for data to read
-  val cycleHiReg  = Reg(Bits(width = DATA_WIDTH))
-  val usecHiReg   = Reg(Bits(width = DATA_WIDTH))
+  val cycleHiReg  = Reg(UInt(DATA_WIDTH.W))
+  val usecHiReg   = Reg(UInt(DATA_WIDTH.W))
 
   // Registers for writing data
-  val cycleLoReg  = Reg(Bits(width = DATA_WIDTH))
-  val usecLoReg   = Reg(Bits(width = DATA_WIDTH))
+  val cycleLoReg  = Reg(UInt(DATA_WIDTH.W))
+  val usecLoReg   = Reg(UInt(DATA_WIDTH.W))
 
   // Default response
   val resp = Wire(Bits())
-  val data = Wire(Bits(width = DATA_WIDTH))
+  val data = Wire(UInt(DATA_WIDTH.W))
   resp := OcpResp.NULL
-  data := Bits(0)
+  data := 0.U
 
   // Read current state of timer
   when(masterReg.Cmd === OcpCmd.RD) {
@@ -61,21 +62,21 @@ class Timer(clk_freq: Int) extends CoreDevice() {
 
     // Read cycle counter
     // Must read word at higher address first!
-    when(masterReg.Addr(3, 2) === Bits("b01")) {
+    when(masterReg.Addr(3, 2) === "b01".U) {
       data := cycleReg(DATA_WIDTH-1, 0)
       cycleHiReg := cycleReg(2*DATA_WIDTH-1, DATA_WIDTH)
     }
-    when(masterReg.Addr(3, 2) === Bits("b00")) {
+    when(masterReg.Addr(3, 2) === "b00".U) {
       data := cycleHiReg
     }
 
     // Read usec counter
     // Must read word at higher address first!
-    when(masterReg.Addr(3, 2) === Bits("b11")) {
+    when(masterReg.Addr(3, 2) === "b11".U) {
       data := usecReg(DATA_WIDTH-1, 0)
       usecHiReg := usecReg(2*DATA_WIDTH-1, DATA_WIDTH)
     }
-    when(masterReg.Addr(3, 2) === Bits("b10")) {
+    when(masterReg.Addr(3, 2) === "b10".U) {
       data := usecHiReg
     }
   }
@@ -86,19 +87,19 @@ class Timer(clk_freq: Int) extends CoreDevice() {
 
     // Write cycle counter interrupt time
     // Must write word at higher address first!
-    when(masterReg.Addr(3, 2) === Bits("b01")) {
+    when(masterReg.Addr(3, 2) === "b01".U) {
       cycleLoReg := masterReg.Data
     }
-    when(masterReg.Addr(3, 2) === Bits("b00")) {
+    when(masterReg.Addr(3, 2) === "b00".U) {
       cycleIntrReg := masterReg.Data ## cycleLoReg
     }
 
     // Write usec counter interrupt time
     // Must write word at higher address first!
-    when(masterReg.Addr(3, 2) === Bits("b11")) {
+    when(masterReg.Addr(3, 2) === "b11".U) {
       usecLoReg := masterReg.Data
     }
-    when(masterReg.Addr(3, 2) === Bits("b10")) {
+    when(masterReg.Addr(3, 2) === "b10".U) {
       usecIntrReg := masterReg.Data ## usecLoReg
     }
   }
@@ -108,23 +109,23 @@ class Timer(clk_freq: Int) extends CoreDevice() {
   io.ocp.S.Data := data
 
   // No interrupts by default
-  io.interrupts(0) := Bool(false)
-  io.interrupts(1) := Bool(false)
+  io.interrupts(0) := false.B
+  io.interrupts(1) := false.B
 
   // Increment cycle counter
-  cycleReg := cycleReg + UInt(1)
+  cycleReg := cycleReg + 1.U
   // Trigger cycles interrupt
-  when (cycleReg + UInt(1) === cycleIntrReg) {
-    io.interrupts(0) := Bool(true)
+  when (cycleReg + 1.U === cycleIntrReg) {
+    io.interrupts(0) := true.B
   }
   // Increment usec counter
-  usecSubReg := usecSubReg + UInt(1)
-  when(usecSubReg === cycPerUSec - UInt(1)) {
-    usecSubReg := UInt(0)
-    usecReg := usecReg + UInt(1)
+  usecSubReg := usecSubReg + 1.U
+  when(usecSubReg === cycPerUSec - 1.U) {
+    usecSubReg := 0.U
+    usecReg := usecReg + 1.U
     // Trigger usec interrupt
-    when (usecReg + UInt(1) === usecIntrReg) {
-      io.interrupts(1) := Bool(true)
+    when (usecReg + 1.U === usecIntrReg) {
+      io.interrupts(1) := true.B
     }
   }
 }

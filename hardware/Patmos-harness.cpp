@@ -1,8 +1,8 @@
-/* 
+/*
 NOTES ON STUFF MISSING FROM THE OLD EMULATOR
 - generating the emulator_config. These care hardcoded below for now
 - VCD dump
-- init_extmem - should not be needed as the current state of the new emulator 
+- init_extmem - should not be needed as the current state of the new emulator
   uses hashmap for memory. Only for testing width of data channel to memory.
   but i haven't found a way to get signal width from verilator.
 
@@ -24,12 +24,8 @@ NOTES ON STUFF MISSING FROM THE OLD EMULATOR
 #include <fcntl.h>
 
 #include "VPatmos.h"
-#include "verilated.h"
 #if VM_TRACE
-#include "verilated_vcd_c.h"
-#endif
-#if CORE_COUNT > 1
-#include "VPatmos_PatmosCore.h"
+#include "verilated_fst_c.h"
 #endif
 
 #define OCMEM_ADDR_BITS 16
@@ -40,11 +36,12 @@ using namespace std;
 
 class Emulator
 {
-  unsigned long m_tickcount;
+  vluint64_t m_tickcount;
   public: VPatmos *c;
-  VerilatedVcdC	*c_trace;
+  VerilatedFstC	*c_trace;
   // For Uart:
   bool UART_on;
+  bool UART_idle;
   int baudrate;
   int freq;
   char in_byte;
@@ -59,15 +56,14 @@ class Emulator
   int write_cntr;
   int write_len;
   bool trace;
-  ostream *outputTarget = &std::cout;
 
   //elf - mem - ram
   #ifdef EXTMEM_SSRAM32CTRL
-  uint32_t *ram_buf; 
+  uint32_t *ram_buf;
   #endif /* EXTMEM_SSRAM32CTRL */
 
   #ifdef EXTMEM_SRAMCTRL
-  uint16_t *ram_buf; 
+  uint16_t *ram_buf;
   #endif /* EXTMEM_SRAMCTRL */
 
 public:
@@ -79,8 +75,8 @@ public:
 
     //for UART
     UART_on = false;
+    UART_idle = false;
     c->io_UartCmp_rx = 1; // keep UART tx high when idle
-    outputTarget = &cout; // default uart print to terminal
 
     #ifdef EXTMEM_SSRAM32CTRL
     ram_buf = (uint32_t *)calloc(1 << EXTMEM_ADDR_BITS, sizeof(uint32_t));
@@ -91,7 +87,7 @@ public:
     #endif /* EXTMEM_SRAMCTRL */
 
     trace = false;
-    
+
   }
 
   ~Emulator(void)
@@ -110,9 +106,9 @@ public:
   void setTrace(){
     trace = true;
     if (!c_trace){
-      c_trace = new VerilatedVcdC;
-			c->trace(c_trace, 99);
-			c_trace->open("Patmos.vcd");
+      c_trace = new VerilatedFstC;
+      c->trace(c_trace, 99);
+      c_trace->open("Patmos.fst");
     }
   }
 
@@ -183,43 +179,80 @@ public:
     UART_on = true;
   }
 
+  void emu_uart(int uart_in,int uart_out) {
+    static unsigned char rx_buf;
+    static unsigned rx_state;
+    static unsigned char tx_buf;
+    static unsigned tx_state;
+    
+    if (c->uartcmp_tx_baud_tick) {
 
-  void emu_uart(int uart_in,int uart_out) {//int uart_in, int uart_out
-    static unsigned baud_counter = 0;
+      // Receive data from Patmos
+      switch(rx_state) {
+        default: //case 0
+          if(c->io_UartCmp_tx == 0)
+            rx_state++;
+          break;
 
-    // Pass on data from UART
-    if (c->Patmos__DOT__UartCmp__DOT__uart__DOT__uartOcpEmu_Cmd == 0x1
-        && (c->Patmos__DOT__UartCmp__DOT__uart__DOT__uartOcpEmu_Addr & 0xff) == 0x04) {
-      unsigned char d = c->Patmos__DOT__UartCmp__DOT__uart__DOT__uartOcpEmu_Data;
-      int w = write(uart_out, &d, 1);
-      if (w != 1) {
-        cerr << "patemu: error: Cannot write UART output" << endl;
-      }
-    }
-
-    // Pass on data to UART
-    bool baud_tick = c->Patmos__DOT__UartCmp__DOT__uart__DOT__tx_baud_tick;
-    if (baud_tick) {
-      baud_counter = (baud_counter + 1) % 10;
-    }
-    if (baud_tick && baud_counter == 0) {
-      struct pollfd pfd;
-      pfd.fd = uart_in;
-      pfd.events = POLLIN;
-      if (poll(&pfd, 1, 0) > 0) {
-        unsigned char d;
-        int r = read(uart_in, &d, 1);
-        if (r != 0) {
-          if (r != 1) {
-            cerr << "patemu: error: Cannot read UART input" << endl;
-          } else {
-            c->Patmos__DOT__UartCmp__DOT__uart__DOT__rx_state = 0x3; // rx_stop_bit
-            c->Patmos__DOT__UartCmp__DOT__uart__DOT__rx_baud_tick = 1;
-            c->Patmos__DOT__UartCmp__DOT__uart__DOT__rxd_reg2 = 1;
-            c->Patmos__DOT__UartCmp__DOT__uart__DOT__rx_buff = d;
-          }
+        case 1 ... 8:
+        {
+          if (c->io_UartCmp_tx == 1)
+            rx_buf |= (1 << (rx_state - 1)); // Set the bit
+          else
+            rx_buf &= ~(1 << (rx_state - 1)); // Clear the bit
+          
+          rx_state++;
+          break;
         }
+
+        case 9:
+          rx_state = 0;
+          int w = write(uart_out, &rx_buf, 1);
+          if (w != 1) {
+            cerr << "patemu: error: Cannot write UART output" << endl;
+          }
+          break;
       }
+      
+      // Send data to Patmos
+      switch(tx_state) {
+        default: //case 0
+          c->io_UartCmp_rx = 1;
+          struct pollfd pfd;
+          pfd.fd = uart_in;
+          pfd.events = POLLIN;
+          if (poll(&pfd, 1, 0) > 0) {
+            unsigned char d;
+            int r = read(uart_in, &tx_buf, 1);
+            if (r == 1) {
+              c->io_UartCmp_rx = 0;
+              tx_state++;
+            }
+            else if(r != 0)
+              cerr << "patemu: error: Cannot read UART input" << endl;
+          }
+          break;
+
+        case 1 ... 8:
+          c->io_UartCmp_rx = ((tx_buf >> (tx_state - 1)) & 1);
+          tx_state++;
+          break;
+
+        case 9:
+          c->io_UartCmp_rx = 1;
+          tx_state = 0;
+          break;
+      }
+      
+      static unsigned idle_cnt = 0;
+      const unsigned idle_cnt_max = 2;
+    
+      if((rx_state != 0) || (tx_state != 0))
+          idle_cnt = 0;
+      else if(idle_cnt < idle_cnt_max)
+        idle_cnt++;
+      
+      UART_idle = idle_cnt >= idle_cnt_max;
     }
   }
 
@@ -229,21 +262,6 @@ public:
       c->io_Keys_key = rand();
     }
 #endif
-  }
-
-  void UART_to_file(string path)
-  {
-    static ofstream outFile;
-    if (!outFile.is_open())
-    {
-      outFile.open(path);
-    }
-    outputTarget = &outFile;
-  }
-
-  void UART_to_console(void)
-  {
-    outputTarget = &cout;
   }
 
   //static val_t readelf(istream &is, Patmos_t *c)
@@ -321,56 +339,9 @@ public:
         //assert(phdr.p_vaddr == phdr.p_paddr);
         assert(phdr.p_filesz <= phdr.p_memsz);
 
-        // copy from the buffer into the on-chip memories
+        // copy from the buffer into memory
         for (size_t k = 0; k < phdr.p_memsz; k++)
         {
-          if ((phdr.p_flags & PF_X) != 0 &&
-              ((phdr.p_paddr + k) >> OCMEM_ADDR_BITS) == 0x1 &&
-              ((phdr.p_paddr + k) & 0x3) == 0)
-          {
-            // Address maps to ISPM and is at a word boundary
-
-            val_t word = k >= phdr.p_filesz ? 0 : 
-              (((val_t)elfbuf[phdr.p_offset + k + 0] << 24) |
-               ((val_t)elfbuf[phdr.p_offset + k + 1] << 16) |
-               ((val_t)elfbuf[phdr.p_offset + k + 2] << 8) | 
-               ((val_t)elfbuf[phdr.p_offset + k + 3] << 0));
-            val_t addr = ((phdr.p_paddr + k) - (0x1 << OCMEM_ADDR_BITS)) >> 3;
-            #if CORE_COUNT == 1
-            unsigned size = (sizeof(c->Patmos__DOT__cores_0__DOT__fetch__DOT__MemBlock__DOT__mem) / //ANTHON THIS MIGHT BE WRONG - SHOULD BE OKAY
-                             sizeof(c->Patmos__DOT__cores_0__DOT__fetch__DOT__MemBlock__DOT__mem[0]));
-            #endif
-            #if CORE_COUNT > 1
-            unsigned size = (sizeof(c->__PVT__Patmos__DOT__cores_0->__PVT__fetch__DOT__MemBlock__DOT__mem) / //ANTHON THIS MIGHT BE WRONG - SHOULD BE OKAY
-                             sizeof(c->__PVT__Patmos__DOT__cores_0->__PVT__fetch__DOT__MemBlock__DOT__mem[0]));
-            #endif
-            assert(addr < size && "Instructions mapped to ISPM exceed size");
-  
-            // Write to even or odd block
-            #if CORE_COUNT == 1
-            if (((phdr.p_paddr + k) & 0x4) == 0)
-            {
-              
-              c->Patmos__DOT__cores_0__DOT__fetch__DOT__MemBlock__DOT__mem[addr] = word;
-            }
-            else
-            {
-              c->Patmos__DOT__cores_0__DOT__fetch__DOT__MemBlock_1__DOT__mem[addr] = word;
-            }
-            #endif
-            #if CORE_COUNT > 1
-            if (((phdr.p_paddr + k) & 0x4) == 0)
-            {
-
-              c->__PVT__Patmos__DOT__cores_0->__PVT__fetch__DOT__MemBlock__DOT__mem[addr] = word;
-            }
-            else
-            {
-              c->__PVT__Patmos__DOT__cores_0->__PVT__fetch__DOT__MemBlock_1__DOT__mem[addr] = word;
-            }
-            #endif
-
-          }
 
           if (((phdr.p_paddr + k) & 0x3) == 0)
           {
@@ -392,18 +363,18 @@ public:
     return entry;
   }
 
-#ifdef EXTMEM_SSRAM32CTRL //TODO test this
+#ifdef EXTMEM_SSRAM32CTRL // TODO: test this
   void write_extmem(val_t address, val_t word)
   {
     ram_buf[address] = word; // This gives segmentation fault dumb on second run!
   }
 
   void init_extmem() {
-    //only needed for random init
+    // only needed for random init
     for (int i = 0; i < (1 << EXTMEM_ADDR_BITS); i++) {
       write_extmem(i, rand());
     }
-  } 
+  }
 
 static void emu_extmem() {
   static uint32_t addr_cnt;
@@ -458,7 +429,7 @@ static void emu_extmem() {
   }
 
   void init_extmem() {
-    //only needed for random init
+    // only needed for random init
     for (int i = 0; i < (1 << EXTMEM_ADDR_BITS)/2; i++) {
       write_extmem(i, rand());
     }
@@ -489,251 +460,49 @@ void emu_extmem() {}
 #endif
 
 
-  void init_icache(val_t entry)
-  {
-    
-    tick(STDIN_FILENO, STDOUT_FILENO);
-    if (entry != 0)
-    {
-      if (entry >= 0x20000)
-      {
-#ifdef ICACHE_METHOD
-        //init for method cache
-#if CORE_COUNT == 1
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__pcReg = -1;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__pcNext = -1;
-        c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__hitReg = 0;
-        c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__hitNext = 0;
-// add multicore support, at the moment only for the method cache and not the ISPM
-#endif
-       
-
-#if CORE_COUNT > 1
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__hitNext = 0;
-
-        c->__PVT__Patmos__DOT__cores_1->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_1->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_1->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_1->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 2
-        c->__PVT__Patmos__DOT__cores_2->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_2->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_2->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_2->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 3
-        c->__PVT__Patmos__DOT__cores_3->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_3->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_3->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_3->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 4
-        c->__PVT__Patmos__DOT__cores_4->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_4->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_4->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_4->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 5
-        c->__PVT__Patmos__DOT__cores_5->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_5->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_5->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_5->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 6
-        c->__PVT__Patmos__DOT__cores_6->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_6->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_6->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_6->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#if CORE_COUNT > 7
-        c->__PVT__Patmos__DOT__cores_7->fetch__DOT__pcReg = -1;
-        c->__PVT__Patmos__DOT__cores_7->fetch__DOT__pcNext = -1;
-        c->__PVT__Patmos__DOT__cores_7->icache__DOT__repl__DOT__hitReg = 0;
-        c->__PVT__Patmos__DOT__cores_7->icache__DOT__repl__DOT__hitNext = 0;
-#endif
-#endif /* ICACHE_METHOD */
-#ifdef ICACHE_LINE
-        //init for icache
-        #if CORE_COUNT == 1
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__pcNext = (entry >> 2) - 1;
-        #endif
-        #if CORE_COUNT > 1
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__pcNext = (entry >> 2) - 1;
-        #endif
-#endif /* ICACHE_LINE */
-#if CORE_COUNT == 1
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__relBaseReg = 0;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__selCache = 1;
-        c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 1
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__selCacheReg = 1;
-
-        c->__PVT__Patmos__DOT__cores_1->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_1->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_1->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_1->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 2
-        c->__PVT__Patmos__DOT__cores_2->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_2->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_2->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_2->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 3
-        c->__PVT__Patmos__DOT__cores_3->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_3->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_3->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_3->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 4
-        c->__PVT__Patmos__DOT__cores_4->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_4->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_4->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_4->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 5
-        c->__PVT__Patmos__DOT__cores_5->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_5->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_5->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_5->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 6
-        c->__PVT__Patmos__DOT__cores_6->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_6->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_6->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_6->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-#if CORE_COUNT > 7
-        c->__PVT__Patmos__DOT__cores_7->fetch__DOT__relBaseReg = 0;
-        c->__PVT__Patmos__DOT__cores_7->fetch__DOT__relocReg = (entry >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_7->fetch__DOT__selCache = 1;
-        c->__PVT__Patmos__DOT__cores_7->icache__DOT__repl__DOT__selCacheReg = 1;
-#endif
-      }
-      else
-      {
-        // pcReg for ispm starts at entry point - ispm base
-#if CORE_COUNT == 1
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__pcNext = ((entry - 0x10000) >> 2) - 1;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__relBaseNext = (entry - 0x10000) >> 2;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__relocNext = 0x10000 >> 2;
-        c->Patmos__DOT__cores_0__DOT__fetch__DOT__selSpmNext = 1;
-        c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__selSpmNext = 1;
-#endif
-#if CORE_COUNT > 1
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__pcNext = ((entry - 0x10000) >> 2) - 1;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relBaseNext = (entry - 0x10000) >> 2;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relocNext = 0x10000 >> 2;
-        c->__PVT__Patmos__DOT__cores_0->fetch__DOT__selSpmNext = 1;
-        c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__selSpmNext = 1;
-#endif 
-      }
-#if CORE_COUNT == 1
-      c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif 
-#if CORE_COUNT > 1
-      c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-
-      c->__PVT__Patmos__DOT__cores_1->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 2
-      c->__PVT__Patmos__DOT__cores_2->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 3
-      c->__PVT__Patmos__DOT__cores_3->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 4
-      c->__PVT__Patmos__DOT__cores_4->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 5
-      c->__PVT__Patmos__DOT__cores_5->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 6
-      c->__PVT__Patmos__DOT__cores_6->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 7
-      c->__PVT__Patmos__DOT__cores_7->icache__DOT__repl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-
-#ifdef ICACHE_METHOD
-#if CORE_COUNT == 1
-      c->Patmos__DOT__cores_0__DOT__icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif 
-#if CORE_COUNT > 1
-      c->__PVT__Patmos__DOT__cores_0->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-
-      c->__PVT__Patmos__DOT__cores_1->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 2
-      c->__PVT__Patmos__DOT__cores_2->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 3
-      c->__PVT__Patmos__DOT__cores_3->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 4
-      c->__PVT__Patmos__DOT__cores_4->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 5
-      c->__PVT__Patmos__DOT__cores_5->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 6
-      c->__PVT__Patmos__DOT__cores_6->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 7
-      c->__PVT__Patmos__DOT__cores_7->icache__DOT__ctrl__DOT__callRetBaseNext = (entry >> 2);
-#endif
-#endif /* ICACHE_METHOD */
-#ifdef ICACHE_LINE
-#if CORE_COUNT == 1
-      c->Patmos__DOT__cores_0__DOT__fetch__DOT__relBaseNext = (entry >> 2);
-#endif
-#if CORE_COUNT > 1
-      c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relBaseNext = (entry >> 2);
-#endif
-#endif /* ICACHE_LINE */
-    }
-  }
   void print_state()
   {
     static unsigned int baseReg = 0;
-    #if CORE_COUNT == 1
-    *outputTarget << ((baseReg + c->Patmos__DOT__cores_0__DOT__fetch__DOT__pcNext) * 4 - c->Patmos__DOT__cores_0__DOT__fetch__DOT__relBaseNext * 4) << " - ";
-    baseReg = c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__callRetBaseNext;
-
-    for (unsigned i = 0; i < 32; i++) {
-      *outputTarget << c->Patmos__DOT__cores_0__DOT__decode__DOT__rf__DOT__rf[i] << " ";
-    }
-    #endif
-    #if CORE_COUNT > 1
-      *outputTarget << ((baseReg + c->__PVT__Patmos__DOT__cores_0->fetch__DOT__pcNext) * 4 - c->__PVT__Patmos__DOT__cores_0->fetch__DOT__relBaseNext * 4) << " - ";
-    baseReg = c->__PVT__Patmos__DOT__cores_0->icache__DOT__repl__DOT__callRetBaseNext;
-
-    for (unsigned i = 0; i < 32; i++) {
-      *outputTarget << c->__PVT__Patmos__DOT__cores_0->__PVT__decode__DOT__rf__DOT__rf[i] << " ";
-    }
-    #endif
-
-    *outputTarget << endl;
+    printf("0x%08x - 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x\n",
+      ((baseReg + c->core0_pcNext - c->core0_relBaseNext) * 4),
+      c->core0_rf_0,
+      c->core0_rf_1,
+      c->core0_rf_2,
+      c->core0_rf_3,
+      c->core0_rf_4,
+      c->core0_rf_5,
+      c->core0_rf_6,
+      c->core0_rf_7,
+      c->core0_rf_8,
+      c->core0_rf_9,
+      c->core0_rf_10,
+      c->core0_rf_11,
+      c->core0_rf_12,
+      c->core0_rf_13,
+      c->core0_rf_14,
+      c->core0_rf_15,
+      c->core0_rf_16,
+      c->core0_rf_17,
+      c->core0_rf_18,
+      c->core0_rf_19,
+      c->core0_rf_20,
+      c->core0_rf_21,
+      c->core0_rf_22,
+      c->core0_rf_23,
+      c->core0_rf_24,
+      c->core0_rf_25,
+      c->core0_rf_26,
+      c->core0_rf_27,
+      c->core0_rf_28,
+      c->core0_rf_29,
+      c->core0_rf_30,
+      c->core0_rf_31
+    );
+    
+    baseReg = c->core0_callRetBaseNext;
   }
-  
-};
 
-// Override Verilator definition so first $finish ends simulation
-// Note: VL_USER_FINISH needs to be defined when compiling Verilator code
-void vl_finish(const char *filename, int linenum, const char *hier)
-{
-  Verilated::flushCall();
-  exit(0);
-}
+};
 
 static void usage(ostream &out, const char *name) {
   out << "Usage: " << name
@@ -745,18 +514,18 @@ static void help(ostream &out) {
       << "  -h            Print this help" << endl
       << "  -i            Initialize memory with random values" << endl
       << "  -l <N>        Stop after <N> cycles" << endl
-      << "  -v            Dump wave forms file \"Patmos.vcd\"" << endl
+      << "  -v            Dump wave forms file \"Patmos.fst\"" << endl
       << "  -r            Print register values in each cycle" << endl
       #ifdef IO_KEYS
       << "  -k            Simulate random input from keys" << endl
       #endif /* IO_KEYS */
-      #ifdef IO_UART      
+      #ifdef IO_UART
       << "  -I <file>     Read input for UART from file <file>" << endl
       << "  -O <file>     Write output from UART to file <file>" << endl
       #endif
   ;
 }
-   
+
 
 int main(int argc, char **argv, char **env)
 {
@@ -765,12 +534,13 @@ int main(int argc, char **argv, char **env)
   int opt;
   int limit = -1;
   bool halt = false;
+  int exitcode = EXIT_SUCCESS;
   bool reg_print = false;
 
   int uart_in = STDIN_FILENO;
   int uart_out = STDOUT_FILENO;
   bool keys = false;
-  
+
   //Parse Arguments
   while ((opt = getopt(argc, argv, "hvl:iO:I:rk")) != -1){
     switch (opt) {
@@ -826,7 +596,7 @@ int main(int argc, char **argv, char **env)
     }
   }
 
-  
+
   emu->reset(1);
   emu->tick(uart_in, uart_out);
   emu->UART_init();
@@ -844,54 +614,46 @@ int main(int argc, char **argv, char **env)
   }
 
   emu->reset(5);
+  
+  emu->c->envinfo_platform = 1; // set platform type to emulator
+  emu->c->envinfo_entrypoint = entry; // set entry point
+
   emu->tick(uart_in, uart_out);
 
-  emu->init_icache(entry);
-
-
-  int cnt = 0;
-  int waituart = 0;
   if(reg_print){
     printf("Patmos start\n");
   }
+
   while (limit < 0 || emu->get_tick_count() < limit)
   {
-    cnt++;
+    if(!halt && emu->c->envinfo_exit != 0) {
+      halt = true;
+      exitcode = emu->c->envinfo_exitcode;
+    }
+
+    halt |= Verilated::gotFinish();
+
+    if (halt && (!emu->UART_on || emu->UART_idle)) {
+      break;
+    }
+
     emu->tick(uart_in, uart_out);
+
     if(keys){
       emu->emu_keys();
     }
     emu->emu_extmem();
-     // Return to address 0 halts the execution after one more iteration
-    if (halt) {
-      break;
-    }
-    #if CORE_COUNT == 1
-    if (reg_print && emu->c->Patmos__DOT__cores_0__DOT__enableReg) {
+    
+    if (reg_print && emu->c->core0_enable) {
       emu->print_state();
     }
-
-    if ((emu->c->Patmos__DOT__cores_0__DOT__memory__DOT__memReg_mem_brcf == 1
-         || emu->c->Patmos__DOT__cores_0__DOT__memory__DOT__memReg_mem_ret == 1)
-        && emu->c->Patmos__DOT__cores_0__DOT__icache__DOT__repl__DOT__callRetBaseReg == 0) {
-      halt = true;
-    }
-    #endif
-    #if CORE_COUNT > 1
-    if (reg_print && emu->c->__PVT__Patmos__DOT__cores_0->__PVT__enableReg) {
-      emu->print_state();
-    }
-
-    if ((emu->c->__PVT__Patmos__DOT__cores_0->__PVT__memory__DOT__memReg_mem_brcf == 1
-         || emu->c->__PVT__Patmos__DOT__cores_0->__PVT__memory__DOT__memReg_mem_ret == 1)
-        && emu->c->__PVT__Patmos__DOT__cores_0->__PVT__icache__DOT__repl__DOT__callRetBaseReg == 0) {
-      halt = true;
-    }
-    #endif
   }
 
   emu->stopTrace();
-  exit(EXIT_SUCCESS);
+  if(reg_print){
+    printf("PASSED\n");
+  }
+  exit(exitcode);
 }
 
 

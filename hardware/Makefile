@@ -23,7 +23,7 @@ CXXFLAGS=-O1
 # Quick fix for Mac OS X
 # How are include paths handled these days in *nix? CMake?
 ifeq ($(TERM_PROGRAM),$(filter $(TERM_PROGRAM), Apple_Terminal iTerm.app))
-	INC_EXTRA=-I /opt/local/include -I /usr/local/include/libelf -I /opt/local/include/libelf -L /opt/local/lib
+	INC_EXTRA=-I /opt/homebrew/include -I /opt/homebrew/include/libelf -L /opt/homebrew/lib
 else
 	INC_EXTRA=
 endif
@@ -32,7 +32,8 @@ endif
 SRC=$(shell find src -name '*.scala')
 
 # main class for Patmos
-MAIN=patmos.PatmosMain
+PATMOSMAIN?=patmos.PatmosMain
+GENEMU?=false
 
 # main classes for core, memory controller and arbiter
 COREMAIN=patmos.PatmosCoreMain
@@ -69,21 +70,8 @@ EXT_SLOT_SIZE?=5
 
 
 # build the C++ version
-emulator: 
+emulator:
 	$(MAKE) -C .. emulator BOOTBAPP=$(BOOTAPP)
-#emulator: $(HWBUILDDIR)/emulator
-
-#$(HWBUILDDIR)/emulator: emulator.cpp $(HWBUILDDIR)/Patmos.cpp $(HWBUILDDIR)/emulator_config.h
-#	$(CXX) $(CXXFLAGS) $(INC_EXTRA) -I $(HWBUILDDIR) -o $@ $(filter %.cpp,$^) -lelf
-
-#$(HWBUILDDIR)/Patmos.cpp $(HWBUILDDIR)/emulator_config.h: $(CGEN)
-#	if [ x`cat $(CGEN)` != x"$(CONFIGFILE)+$(BOOTBIN)+$(BOOTDAT)" ]; then \
-#		rm $(CGEN); $(MAKE) $(CGEN); \
-#	fi
-
-#$(CGEN): $(BOOTBIN) $(BOOTDAT) $(SRC)
-#	$(SBT) "runMain $(MAIN) $(CONFIGFILE) $(BOOTBIN) $(BOOTDAT) --vcd --targetDir $(HWBUILDDIR) --cse --backend c"
-#	echo $(CONFIGFILE)+$(BOOTBIN)+$(BOOTDAT) > $(CGEN)
 
 # run emulator
 test: emulator
@@ -95,6 +83,10 @@ view:
 
 # build the Verilog version
 verilog: $(HWBUILDDIR)/$(HWMODULEPREFIX)Patmos.v
+	cd ../../argo && sbt "runMain argo.Argo"
+	cp ../../argo/argo_build/*.v $(HWBUILDDIR)
+	cp verilog/AsyncArbiter.v $(HWBUILDDIR)
+	cp verilog/AsyncMutex.v $(HWBUILDDIR)
 
 modules: \
 	$(HWBUILDDIR)/$(HWMODULEPREFIX)PatmosCore.v \
@@ -106,7 +98,7 @@ $(HWBUILDDIR)/$(HWMODULEPREFIX)Patmos.v: $(VGEN)
 	fi
 
 $(VGEN): $(BOOTBIN) $(BOOTDAT) $(SRC)
-	$(SBT) "runMain $(MAIN) $(CONFIGFILE) $(BOOTBIN) $(BOOTDAT) --target-dir $(HWBUILDDIR) $(HWMODULEPREFIXOPT)"
+	$(SBT) "runMain $(PATMOSMAIN) $(CONFIGFILE) $(BOOTBIN) $(BOOTDAT) $(GENEMU) --target-dir $(HWBUILDDIR) $(HWMODULEPREFIXOPT)"
 	echo $(CONFIGFILE)+$(BOOTBIN)+$(BOOTDAT)+$(HWMODULEPREFIX) > $(VGEN)
 
 $(HWBUILDDIR)/$(HWMODULEPREFIX)PatmosCore.v: $(VGENCORE)
@@ -144,7 +136,7 @@ vsim: verilog
 	$(MAKE) -C modelsim sim
 
 #elaborate rtl with Quartus
-elab_quartus: 
+elab_quartus:
 	quartus_map quartus/$(BOARD)/patmos --analysis_and_elaboration
 
 rtl_quartus:
@@ -234,7 +226,7 @@ oneway:
 oneway_test:
 	$(SBT) "test:runMain oneway.OneWayMemTester"
 
-Network-test: 
+Network-test:
 	$(SBT) "test:runMain s4noc.NetworkTester"
 
 

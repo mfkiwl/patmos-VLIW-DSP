@@ -1,63 +1,28 @@
 # The S4NOC
 
-These applications are used for the evaluation section of the following paper:
+These applications are used to explore the usage of S4NOC with Patmos.
 
-Martin Schoeberl, Luca Pezzarossa, and Jens Sparso, A Simple Network Interface for a Simple Network-on-Chip, *submitted to ARCS 2019*
+If you are looking for the initial evaluation of the S4NOC, please refer to the [s4noc-2019](../s4noc-2019/README.md) folder.
 
-## Stand Alone Evaluation
-
-The network interface and the S4NOC are written in Chisel and the
-source can be found at: `patmos/hardware/src/main/scala/s4noc`.
-
-The tests can run from within folder `patmos/hardware`, e.g.:
-
-	sbt "test:runMain s4noc.ScheduleTester"
-	sbt "test:runMain s4noc.RouterTester"
-	sbt "test:runMain s4noc.NetworkTester"
-	sbt "test:runMain s4noc.NetworkCompare"
-	sbt "test:runMain s4noc.S4nocTester"
-
-or from your favorite Scala IDE (e.g., InelliJ or Eclipse) or from this folder with
-
-```bash
-make test-all
-make test
-```
-
-A standalone version of the S4NoC with simple traffic generators can be built
-with:
-
-```bash
-sbt "runMain s4noc.S4nocTrafficGen n"
-```
-
-where n is the number of cores (e.g., 4, 9, or 16 (maximum is 100)).
-
-The generated Verilog file can be found in ```generated/S4nocTrafficGen.v```
-and can be synthesized to provide resource numbers and maximum
-clocking frequency. An example project for Quartus can be found in this
-[quartus](quartus) subfolder.
-
-## Evaluation with T-CREST
-
-We use the T-CREST multicore to evaluate the network interface with the S4NOC.
-General build instructions of T-CREST in [Main README](../../../README.md).
+We use the T-CREST multicore to evaluate the S4NOC.
+General build instructions of T-CREST can be found in the [Main README](../../../README.md).
 
 Before building the Patmos processor, add the following lines after `<frequency Hz="80000000"/>` in 
 [altde2-115.xml](../../../hardware/config/altde2-115.xml):
 ```
-<cores count="9" />
+<cores count="4" />
 <pipeline dual="false" />
 
 <CmpDevs>
-  <CmpDev name="S4noc" />
+  <CmpDev name="S4NoC" />
 </CmpDevs>
 ```
 
 with cores count either 4 or 9. Use just 4 for running the emulator.
+This configuration might be default as the writing of this README.
 
-A simple C program for a first test are found at 
-[hello_s4noc.c](hello_s4noc.c)
+A simple C program for a first test can be found at 
+[hello-noc.c](hello-noc.c)
 
 ### Evaluation with the Emulator
 
@@ -91,15 +56,6 @@ Afterwards run:
 make app download APP=s4noc 
 ```
 This compiles and downloads a simple test for the S4NOC"
-Change `MAIN` to the appropriate test.
-
-Further test programs can be found in the ```c/app/s4noc``` folder.
-Various parameters can be set via COPTS and $defines for the compilation, e.g.,:
-
-```
-make app APP=s4noc MAIN=prodcons_flow COPTS="-D BUF_LEN=8 -D NR_CREDITS=4"
-```
-
 
 ### Running out of Heap
 

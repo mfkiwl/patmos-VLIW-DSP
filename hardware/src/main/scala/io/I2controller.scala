@@ -8,7 +8,8 @@
  */
 package io
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import ocp._
 
 object I2Controller extends DeviceObject {
@@ -27,12 +28,18 @@ object I2Controller extends DeviceObject {
 
 class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
   override val io = new CoreDeviceIO() with patmos.HasPins {
-    override val pins = new Bundle() {
-		 val sdaIn = Bool(INPUT)
-		 val sdaOut = Bool(OUTPUT)
-		 val sclOut = Bool(OUTPUT)
-		 val sclIn = Bool(INPUT)
-		 val i2cEn = Bool(OUTPUT)
+    val pins: Bundle {
+			val sdaIn: Bool
+			val sdaOut: Bool
+			val sclOut: Bool
+			val sclIn: Bool
+			val i2cEn: Bool
+		} = new Bundle() {
+		 val sdaIn = Input(Bool())
+		 val sdaOut = Output(Bool())
+		 val sclOut = Output(Bool())
+		 val sclIn = Input(Bool())
+		 val i2cEn = Output(Bool())
     }
   }
 
@@ -60,20 +67,20 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 	val sclClk = RegInit(false.B) //Internal clock ena/disable scl
 	val sdaClk = RegInit(false.B) //Internal clock ena/disabling sda
 	val sdaClkPrev = RegNext(sdaClk) //Previous value, used to detect rising/falling edge
-	val clkCnt = RegInit(UInt(0, width=32))  //Counter used to generate sda/sclClk
-	val stretch = Wire(init=false.B) //Is the slave device clock stretching
+	val clkCnt = RegInit(0.U(32.W))  //Counter used to generate sda/sclClk
+	val stretch = WireDefault(false.B) //Is the slave device clock stretching
 	val sdaRising = sdaClk && !sdaClkPrev //Rising edge of sdaClk
 	val sdaFalling = !sdaClk && sdaClkPrev //Falling edge of sdaClk
 
 	//I2C read registers
-	val readVals = Reg(Vec(4,RegInit(UInt(0, width=8))))
-	val readCount = RegInit(UInt(0, width=3))
+	val readVals = Reg(Vec(4,RegInit(0.U(8.W))))
+	val readCount = RegInit(0.U(3.W))
 	val readFlag =  RegInit(false.B)
 
 	
 
 	//i2c process State machine
-	val ready::start::command::slv_ack1::wr::rd::slv_ack2::mstr_ack::stop::Nil = Enum(UInt(), 9) //States
+	val ready::start::command::slv_ack1::wr::rd::slv_ack2::mstr_ack::stop::Nil = Enum(9) //States
 	val i2cState = RegInit(ready) //State register
 	when(i2cState === ready) {
 		i2cEn := false.B
@@ -99,21 +106,21 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 	//val i2c_data_rd = Vec(8, Bool()) //Data read from slave
 	val sclEn = RegInit(false.B) //Enable for scl (used in all other states than start/stop)
 	val sdaOutval = RegInit(true.B) //Value that should be written on sdaOut. Defaults true for high impedance
-	val bitcnt = RegInit(UInt(7, width=3)) //Which bit we're currently reading/writing
+	val bitcnt = RegInit(7.U(3.W)) //Which bit we're currently reading/writing
 	val ackError = RegInit(false.B) //Is there an acknowledge error from slave?
 
-//	val ocpAddr = Reg(UInt(width=7)) //Address of the current slave device
-//	val ocpRw = Reg(UInt(width=1)) //Read(1) or write(0)
+//	val ocpAddr = Reg(UInt(7.W)) //Address of the current slave device
+//	val ocpRw = Reg(UInt(1.W)) //Read(1) or write(0)
 	//end 
 	val ocp = Reg(new OcpI2CVals)
 //	val ocpReg = Reg(ocp)
 
 
-//	val addrRW = Reg(UInt(width=8)) //Concatenated version of address and read/write bit
-//	val dataWr = Reg(UInt(width=8)) //Data to write to slave
+//	val addrRW = Reg(UInt(8.W)) //Concatenated version of address and read/write bit
+//	val dataWr = Reg(UInt(8.W)) //Data to write to slave
 
 	//OCP signals
-//	val ocp_data_wr = Reg(UInt(width=8)) //Write dataWr received from OCP
+//	val ocp_data_wr = Reg(UInt(8.W)) //Write dataWr received from OCP
 //	val ocp_data_rd = Reg(Vec(8, Bool())) //Data received from slave
 
 
@@ -336,15 +343,15 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 	*/
 	val ocpM = io.ocp.M //Shortcut to access master register
 	val ocpS = io.ocp.S //Shortcut to access slave output register
-	val ocpIdle :: ocpLoad :: ocpListen :: ocpMore :: ocpReadWaiter :: Nil = Enum(UInt(), 5)
+	val ocpIdle :: ocpLoad :: ocpListen :: ocpMore :: ocpReadWaiter :: Nil = Enum(5)
 
 	val ocpState = RegInit(ocpIdle) //The current state of the ocp/i2c transaction interface
 	val ocpCmd = (ocpM.Cmd === OcpCmd.RD || ocpM.Cmd === OcpCmd.WR) //If a command has been received
 	val ocpAvailable = RegInit(true.B) //Is OCP available for more dataWr?
-	val bytesToRead = RegInit(UInt(0, width=3))
+	val bytesToRead = RegInit(0.U(3.W))
 
 	val respReg = RegInit(OcpResp.NULL) //Ocp data response
-	val dataReg = RegInit(UInt(0, width=32))
+	val dataReg = RegInit(0.U(32.W))
 
 	respReg := OcpResp.NULL //Default assignment response to Null
 	dataReg := 0.U //Default assign to all zeros
@@ -398,7 +405,7 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 	when(ocpCmd) {
 		switch(ocpM.Addr(5,2)) {
 			//Load new command
-			is(Bits("b0000")) {
+			is("b0000".U) {
 				when(ocpAvailable) {
 					ocp.addrRW := ocpM.Data(15,8) //Address of the slave device + rw bit
 					ocp.dataWr := ocpM.Data(7,0) //Data to write to slave
@@ -407,12 +414,12 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 				}
 			}
 			//Read ocpAvailable flag
-			is(Bits("b0001")) {
+			is("b0001".U) {
 				dataReg := ocpAvailable
-				// dataReg := Cat(UInt(0, width=31), ocpAvailable)
+				// dataReg := Cat(0.U(31.W), ocpAvailable)
 			}
 			//Retrieve read data and reset readVals
-			is(Bits("b0010")){
+			is("b0010".U){
 				dataReg := Cat(readVals(3),readVals(2),readVals(1),readVals(0))
 				readCount := 0.U
 				readVals(0) := 0.U
@@ -422,7 +429,7 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 				readFlag := false.B
 			}
 			//Retrieve readFlag from system
-			is(Bits("b0100")){
+			is("b0100".U){
 				dataReg := readFlag 
 			}
 		}
@@ -440,7 +447,7 @@ class I2Controller(sclFreq: Int, respectStretch: Boolean) extends CoreDevice() {
 Bundle that allows for easier access and grouping of dataWr, dataRd, address
 */
 class OcpI2CVals extends Bundle {
-	val dataWr = UInt(width=8) //Data read from slave device
-	val dataRd = UInt(width=8) //Data writing to slave device. Not used in OCP instance of this bundle
-	val addrRW = UInt(width=8) //Concatenated version of address and rw.
+	val dataWr = UInt(8.W) //Data read from slave device
+	val dataRd = UInt(8.W) //Data writing to slave device. Not used in OCP instance of this bundle
+	val addrRW = UInt(8.W) //Concatenated version of address and rw.
 }

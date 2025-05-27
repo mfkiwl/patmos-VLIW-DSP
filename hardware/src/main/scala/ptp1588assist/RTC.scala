@@ -1,16 +1,17 @@
 package ptp1588assist
 
 import scala.math._
-import Chisel._
+import chisel3._
+import chisel3.util._
 import io.CoreDeviceIO
 import ocp.{OcpCmd, OcpCoreSlavePort, OcpResp}
 import patmos.Constants._
 
  class RTC(clockFreq: Int = CLOCK_FREQ, secondsWidth: Int = 32, nanoWidth: Int = 32, initialTime: BigInt, ppsDuration: Int = 10) extends Module {
-   override val io = new Bundle() {
+   val io = new Bundle() {
      val ocp = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
-     val ptpTimestamp = UInt(OUTPUT, width = secondsWidth + nanoWidth)
-     val pps = Bool(OUTPUT)
+     val ptpTimestamp = Output(UInt((secondsWidth + nanoWidth).W))
+     val pps = Output(Bool())
    }
 
    // Constants
@@ -48,7 +49,7 @@ import patmos.Constants._
    val nextNano = nsTickReg + nsIncrement
    //update seconds
    when(updateSecReg) {
-     secTickReg := timeReg(2 * DATA_WIDTH - 1, DATA_WIDTH)
+     secTickReg := timeReg(3 * DATA_WIDTH - 1, DATA_WIDTH)
    }
    //update nanoseconds
    when(updateNsReg) {
@@ -74,7 +75,7 @@ import patmos.Constants._
      }
    }
 
-   //Smooth Adjustment
+  //Smooth Adjustment
    when(nsOffsetReg < -MICRO_IN_NANO.S && nsOffsetReg >= -MILLI_IN_NANO.S) { //-1ms to 1us
      correctionStepReg := TIME_STEP.S
    }.elsewhen(nsOffsetReg < -HUNDRED_NANO.S && nsOffsetReg >= -MICRO_IN_NANO.S) { //-1us to -100ns
@@ -106,15 +107,19 @@ import patmos.Constants._
    when(masterReg.Cmd === OcpCmd.WR) {
      respReg := OcpResp.DVA
      switch(masterReg.Addr(5, 0)) {
-       is(Bits("h00")) {
+       is("h00".U) {
          updateNsReg := true.B
-         timeReg := 0.U(DATA_WIDTH.W) ## masterReg.Data.asUInt()
+         timeReg := Cat(secTickReg, masterReg.Data(DATA_WIDTH-1,0))
        }
-       is(Bits("h04")) {
+       is("h04".U) {
          updateSecReg := true.B
-         timeReg:= masterReg.Data.asUInt() ## 0.U(DATA_WIDTH.W)
+         timeReg := Cat(Cat( timeReg(3*DATA_WIDTH - 1, 2*DATA_WIDTH), masterReg.Data(DATA_WIDTH-1,0)), timeReg(DATA_WIDTH - 1, 0))
        }
-       is(Bits("h20")) {
+       is("h08".U) {
+         updateSecReg := true.B
+         timeReg := Cat(masterReg.Data(DATA_WIDTH-1,0), timeReg(2*DATA_WIDTH - 1, 0))
+       }
+       is("h20".U) {
          nsOffsetReg := masterReg.Data.asSInt()
        }
      }
@@ -124,13 +129,16 @@ import patmos.Constants._
    when(masterReg.Cmd === OcpCmd.RD) {
      respReg := OcpResp.DVA
      switch(masterReg.Addr(5, 0)) {
-       is(Bits("h00")) {
+       is("h00".U) {
          dataReg := timeReg(DATA_WIDTH - 1, 0)
        }
-       is(Bits("h04")) {
+       is("h04".U) {
          dataReg := timeReg(2 * DATA_WIDTH - 1, DATA_WIDTH)
        }
-       is(Bits("h20")) {
+       is("h08".U) {
+         dataReg := timeReg(3 * DATA_WIDTH - 1, 2* DATA_WIDTH)
+       }
+       is("h20".U) {
          dataReg := nsOffsetReg(32, 1)
        }
      }
@@ -148,9 +156,9 @@ import patmos.Constants._
 //class RTC(clockFreq: Int = CLOCK_FREQ, secondsWidth: Int = 32, nanoWidth: Int = 32, initialTime: BigInt, ppsDuration: Int = 10) extends Module {
 //  override val io = new Bundle() {
 //    val ocp = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
-//    val ptpTimestamp = UInt(OUTPUT, width = secondsWidth + nanoWidth)
-//    val periodIntr = Bool(OUTPUT)
-//    val pps = Bool(OUTPUT)
+//    val ptpTimestamp = Output(UInt((secondsWidth + nanoWidth).W))
+//    val periodIntr = Output(Bool())
+//    val pps = Output(Bool())
 //  }
 //
 //  // Constants
@@ -169,17 +177,17 @@ import patmos.Constants._
 //  val masterReg = Reg(next = io.ocp.M)
 //
 //  // Registers
-//  val prescaleReg = Reg(init = UInt(0, width = PRESCALER_WIDTH))
+//  val prescaleReg = Reg(init = 0.U(PRESCALER_WIDTH.W))
 //  val correctionStepReg = Reg(init = SInt(0, width = nanoWidth+1))
 //  val nsOffsetReg = Reg(init = SInt(0, width = nanoWidth+1))
-//  val timeReg = Reg(init = UInt(0, width = secondsWidth + nanoWidth))
-//  val secTickReg = Reg(init = UInt(initialTime, width = secondsWidth))
-//  val nsTickReg = Reg(init = UInt(0, width = nanoWidth))
+//  val timeReg = Reg(init = 0.U((secondsWidth + nanoWidth).W))
+//  val secTickReg = Reg(init = initialTime.U((secondsWidth).W))
+//  val nsTickReg = Reg(init = 0.U(nanoWidth.W))
 //  val updateSecReg = Reg(init = false.B)
 //  val updateNsReg = Reg(init = false.B)
-//  val periodSelReg = Reg(init = UInt(secondsWidth + nanoWidth - 1, width = log2Up(secondsWidth + nanoWidth)))
+//  val periodSelReg = Reg(init = (secondsWidth + nanoWidth - 1).U(log2Up(secondsWidth + nanoWidth).W))
 //  val ppsReg = Reg(init = false.B)
-//  val ppsHoldCountReg = Reg(init = UInt(PPS_DURATION, width = log2Up(PPS_DURATION)))
+//  val ppsHoldCountReg = Reg(init = PPS_DURATION.U(log2Up(PPS_DURATION).W))
 //
 //  // Default response
 //  val respReg = Reg(init = OcpResp.NULL)
@@ -312,7 +320,6 @@ import patmos.Constants._
 
 object RTC {
   def main(args: Array[String]): Unit = {
-    chiselMain(Array[String]("--backend", "v", "--targetDir", "generated/RTC"),
-      () => Module(new RTC(80000000, 32, 32, 0x5ac385dcL, 10)))
+    emitVerilog(new RTC(80000000, 32, 32, 0x5ac385dcL, 10), Array[String]("-td", "generated/RTC"))
   }
 }

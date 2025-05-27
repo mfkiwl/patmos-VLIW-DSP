@@ -14,7 +14,8 @@ package io
 
 import scala.math._
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import ocp._
 
@@ -46,24 +47,32 @@ class QdrIIplusCtrl(ocpAddrWidth   : Int,
                     readWaitCycles : Int = 5) extends BurstDevice(ocpAddrWidth) {
 
   override val io = new BurstDeviceIO(ocpAddrWidth) with patmos.HasPins {
-    override val pins = new Bundle {
-      val addr  = Bits(OUTPUT, width = ramAddrWidth)
+    val pins: Bundle {
+      val addr: UInt
+      val nrps: UInt
+      val nwps: UInt
+      val nbws: Vec[UInt]
+      val din: Vec[UInt]
+      val dout: Vec[UInt]
+      val ndoff: UInt
+    } = new Bundle {
+      val addr  = Output(UInt(ramAddrWidth.W))
 
-      val nrps  = Bits(OUTPUT, width = 1)
-      val nwps  = Bits(OUTPUT, width = 1)
-      val nbws  = Vec.fill(2) { Bits(OUTPUT, width = ramDataWidth / 8) }
+      val nrps  = Output(UInt(1.W))
+      val nwps  = Output(UInt(1.W))
+      val nbws  = Output(Vec(2, UInt((ramDataWidth / 8).W)))
 
-      val din   = Vec.fill(2) { Bits(INPUT, width = ramDataWidth) }
-      val dout  = Vec.fill(2) { Bits(OUTPUT, width = ramDataWidth) }
+      val din   = Input(Vec(2, UInt(ramDataWidth.W)))
+      val dout  = Output(Vec(2, UInt(ramDataWidth.W)))
 
-      val ndoff = Bits(OUTPUT, width = 1)
+      val ndoff = Output(UInt(1.W))
     }
   }
 
   // Checks for input parameters
-  assert(Bool(DATA_WIDTH % ramDataWidth == 0),"DATA_WIDTH is not a multiple of ramDataWidth ")
-  assert(Bool(ramAddrWidth <= ocpAddrWidth),"ocpAddrWidth cannot access the full RAM")
-  assert(Bool(isPow2(ramDataWidth/8)),"number of bytes per transaction to RAM is not a power of 2")
+  require(DATA_WIDTH % ramDataWidth == 0,"DATA_WIDTH is not a multiple of ramDataWidth ")
+  require(ramAddrWidth <= ocpAddrWidth, "ocpAddrWidth cannot access the full RAM")
+  require(isPow2(ramDataWidth/8),"number of bytes per transaction to RAM is not a power of 2")
 
   // Helper functions
   // log2up is a standard function but log2up(1)=1 and it should be 0
@@ -76,39 +85,39 @@ class QdrIIplusCtrl(ocpAddrWidth   : Int,
   val BYTESPERSEL  = BYTESPERTRAN * TRANSPERSEL
 
   // State type and variable
-  val sReady :: sReadSel :: sReadWait :: sReadExe :: sReadRet :: sWriteRec  :: sWriteSel :: sWriteExe:: sWriteRet :: Nil = Enum(UInt(), 9)
-  val stateReg = Reg(init = sReady)
+  val sReady :: sReadSel :: sReadWait :: sReadExe :: sReadRet :: sWriteRec  :: sWriteSel :: sWriteExe:: sWriteRet :: Nil = Enum(9)
+  val stateReg = RegInit(init = sReady)
 
   // Internal Registers
-  val mAddrReg         = Reg(Bits(width = ramAddrWidth))
-  val rdBufferReg      = Reg(Vec(TRANSPERCMD, Bits(width = ramDataWidth)))
+  val mAddrReg         = Reg(UInt(ramAddrWidth.W))
+  val rdBufferReg      = Reg(Vec(TRANSPERCMD, UInt(ramDataWidth.W)))
   val wrBufferReg      = Reg(Vec(TRANSPERCMD, new Trans(BYTESPERTRAN, ramDataWidth)))
-  val transCountReg    = Reg(init = UInt(0, width = log2upNew(TRANSPERCMD)))
-  val subTransCountReg = Reg(init = UInt(0, width = log2upNew(TRANSPERSEL)))
-  val wordCountReg     = Reg(init = UInt(0, width = log2upNew(ocpBurstLen)))
-  val waitCountReg     = Reg(init = UInt(0, width = log2upNew(readWaitCycles)))
+  val transCountReg    = RegInit(init = 0.U(log2upNew(TRANSPERCMD).W))
+  val subTransCountReg = RegInit(init = 0.U(log2upNew(TRANSPERSEL).W))
+  val wordCountReg     = RegInit(init = 0.U(log2upNew(ocpBurstLen).W))
+  val waitCountReg     = RegInit(init = 0.U(log2upNew(readWaitCycles).W))
 
   // Output Registers
-  val addrReg = Reg(Bits(width = ramAddrWidth))
-  val nrpsReg = Reg(Bits(width = 1))
-  val nwpsReg = Reg(Bits(width = 1))
-  val nbwsReg = Reg(Vec(2, Bits(width = BYTESPERTRAN)))
-  val doutReg = Reg(Vec(2, Bits(width = ramDataWidth)))
+  val addrReg = Reg(UInt(ramAddrWidth.W))
+  val nrpsReg = Reg(UInt(1.W))
+  val nwpsReg = Reg(UInt(1.W))
+  val nbwsReg = Reg(Vec(2, UInt(BYTESPERTRAN.W)))
+  val doutReg = Reg(Vec(2, UInt(ramDataWidth.W)))
 
   // Default values for ocp io.ocp.S port
   io.ocp.S.Resp := OcpResp.NULL
-  io.ocp.S.CmdAccept := Bits(0)
-  io.ocp.S.DataAccept := Bits(0)
+  io.ocp.S.CmdAccept := 0.U
+  io.ocp.S.DataAccept := 0.U
   val data = for(i <- 0 until TRANSPERWORD)
-             yield rdBufferReg(wordCountReg ## UInt(i))
+             yield rdBufferReg(wordCountReg ## i.U)
   io.ocp.S.Data := data.reduceLeft((x,y) => y ## x)
 
   // Default values for output ports
   addrReg := mAddrReg
   doutReg(0) := wrBufferReg(0).data
   doutReg(1) := wrBufferReg(1).data
-  nrpsReg := Bits(1)
-  nwpsReg := Bits(1)
+  nrpsReg := 1.U
+  nwpsReg := 1.U
   nbwsReg(0) := ~wrBufferReg(0).byteEna
   nbwsReg(1) := ~wrBufferReg(1).byteEna
 
@@ -120,19 +129,19 @@ class QdrIIplusCtrl(ocpAddrWidth   : Int,
     when(io.ocp.M.Cmd =/= OcpCmd.IDLE) {
       mAddrReg := io.ocp.M.Addr(ramAddrWidth + log2upNew(BYTESPERSEL) - 1,
                                 log2upNew(BYTESPERSEL))
-      io.ocp.S.CmdAccept := Bits(1)
+      io.ocp.S.CmdAccept := 1.U
       when(io.ocp.M.Cmd === OcpCmd.RD) {
         stateReg := sReadSel
       }
       when(io.ocp.M.Cmd === OcpCmd.WR) {
-        io.ocp.S.DataAccept := Bits(1)
-        wordCountReg := UInt(1) // The first ocp data word is already in wrBufferReg
+        io.ocp.S.DataAccept := 1.U
+        wordCountReg := 1.U // The first ocp data word is already in wrBufferReg
         stateReg := sWriteRec
       }
     }
   }
   when(stateReg === sReadSel) {
-    nrpsReg := Bits(0)
+    nrpsReg := 0.U
     if (readWaitCycles == 0) {
       stateReg := sReadExe
     } else {
@@ -140,72 +149,72 @@ class QdrIIplusCtrl(ocpAddrWidth   : Int,
     }
   }
   when(stateReg === sReadWait) {
-    waitCountReg := waitCountReg + UInt(1)
-    when(waitCountReg === UInt(readWaitCycles-1)) {
+    waitCountReg := waitCountReg + 1.U
+    when(waitCountReg === (readWaitCycles-1).U) {
       stateReg := sReadExe
-      waitCountReg := UInt(0)
+      waitCountReg := 0.U
     }
   }
   when(stateReg === sReadExe) {
-    transCountReg := transCountReg + UInt(1)
-    subTransCountReg := subTransCountReg + UInt(1)
-    rdBufferReg(transCountReg ## UInt(0)) := io.pins.din(0)
-    rdBufferReg(transCountReg ## UInt(1)) := io.pins.din(1)
-    when(subTransCountReg === UInt((TRANSPERSEL+1)/2-1)) {
+    transCountReg := transCountReg + 1.U
+    subTransCountReg := subTransCountReg + 1.U
+    rdBufferReg(transCountReg ## 0.U) := io.pins.din(0)
+    rdBufferReg(transCountReg ## 1.U) := io.pins.din(1)
+    when(subTransCountReg === ((TRANSPERSEL+1)/2-1).U) {
       stateReg := sReadSel
-      mAddrReg := mAddrReg + UInt(1)
-      subTransCountReg := UInt(0)
+      mAddrReg := mAddrReg + 1.U
+      subTransCountReg := 0.U
     }
-    when(transCountReg === UInt((TRANSPERCMD+1)/2-1)) {
+    when(transCountReg === ((TRANSPERCMD+1)/2-1).U) {
       stateReg := sReadRet
-      transCountReg := UInt(0)
+      transCountReg := 0.U
     }
   }
   when(stateReg === sReadRet) {
     io.ocp.S.Resp := OcpResp.DVA
-    wordCountReg := wordCountReg + UInt(1)
-    when(wordCountReg === UInt(ocpBurstLen-1)) {
+    wordCountReg := wordCountReg + 1.U
+    when(wordCountReg === (ocpBurstLen-1).U) {
       stateReg := sReady
-      wordCountReg := UInt(0)
+      wordCountReg := 0.U
     }
   }
   when(stateReg === sWriteRec) {
     for(i <- 0 until TRANSPERWORD) {
-      wrBufferReg(wordCountReg ## UInt(i)).byteEna :=
+      wrBufferReg(wordCountReg ## i.U).byteEna :=
         io.ocp.M.DataByteEn((i+1)*BYTESPERTRAN-1,i*BYTESPERTRAN)
-      wrBufferReg(wordCountReg ## UInt(i)).data :=
+      wrBufferReg(wordCountReg ## i.U).data :=
         io.ocp.M.Data((i+1)*ramDataWidth-1,i*ramDataWidth)
     }
-    when(io.ocp.M.DataValid === Bits(1)){
-      io.ocp.S.DataAccept := Bits(1)
-      wordCountReg := wordCountReg + UInt(1)
-      when(wordCountReg === UInt(ocpBurstLen-1)){
+    when(io.ocp.M.DataValid === 1.U){
+      io.ocp.S.DataAccept := 1.U
+      wordCountReg := wordCountReg + 1.U
+      when(wordCountReg === (ocpBurstLen-1).U){
         stateReg := sWriteExe
-        wordCountReg := UInt(0)
-        nwpsReg := Bits(0)
+        wordCountReg := 0.U
+        nwpsReg := 0.U
       }
     }
   }
   when(stateReg === sWriteSel) {
     stateReg := sWriteExe
-    nwpsReg := Bits(0)
+    nwpsReg := 0.U
   }
   when(stateReg === sWriteExe) {
-    doutReg(0) := wrBufferReg(transCountReg ## UInt(0)).data
-    doutReg(1) := wrBufferReg(transCountReg ## UInt(1)).data
-    nbwsReg(0) := ~wrBufferReg(transCountReg ## UInt(0)).byteEna
-    nbwsReg(1) := ~wrBufferReg(transCountReg ## UInt(1)).byteEna
-    transCountReg := transCountReg + UInt(1)
-    subTransCountReg := subTransCountReg + UInt(1)
-    when(subTransCountReg === UInt((TRANSPERSEL+1)/2-1)) {
+    doutReg(0) := wrBufferReg(transCountReg ## 0.U).data
+    doutReg(1) := wrBufferReg(transCountReg ## 1.U).data
+    nbwsReg(0) := ~wrBufferReg(transCountReg ## 0.U).byteEna
+    nbwsReg(1) := ~wrBufferReg(transCountReg ## 1.U).byteEna
+    transCountReg := transCountReg + 1.U
+    subTransCountReg := subTransCountReg + 1.U
+    when(subTransCountReg === ((TRANSPERSEL+1)/2-1).U) {
       stateReg := sWriteSel
-      mAddrReg := mAddrReg + UInt(1)
-      subTransCountReg := UInt(0)
+      mAddrReg := mAddrReg + 1.U
+      subTransCountReg := 0.U
     }
-    when(transCountReg === UInt((TRANSPERCMD+1)/2-1)) {
+    when(transCountReg === ((TRANSPERCMD+1)/2-1).U) {
       io.ocp.S.Resp := OcpResp.DVA
       stateReg := sReady
-      transCountReg := UInt(0)
+      transCountReg := 0.U
     }
   }
 
@@ -217,17 +226,11 @@ class QdrIIplusCtrl(ocpAddrWidth   : Int,
   io.pins.nbws := nbwsReg
 
   // Hard-wired pins
-  io.pins.ndoff := Bits(1)
+  io.pins.ndoff := 1.U
 
   class Trans(bytesEnaWidth: Int, dataWidth: Int) extends Bundle {
-    val byteEna = Bits(width = bytesEnaWidth)
-    val data = Bits(width = dataWidth)
-
-    // This does not really clone, but Data.clone doesn't either
-    override def cloneType() = {
-      val res = new Trans(bytesEnaWidth, dataWidth)
-      res.asInstanceOf[this.type]
-    }
+    val byteEna = UInt(bytesEnaWidth.W)
+    val data = UInt(dataWidth.W)
   }
 }
 
@@ -238,6 +241,6 @@ object QdrIIplusCtrlMain {
   def main(args: Array[String]): Unit = {
     val chiselArgs = args.slice(1,args.length)
     val ocpAddrWidth = args(0).toInt
-    chiselMain(chiselArgs, () => Module(new QdrIIplusCtrl(ocpAddrWidth)))
+    emitVerilog(new QdrIIplusCtrl(ocpAddrWidth), chiselArgs)
   }
 }

@@ -6,7 +6,8 @@
 
 package cmp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos._
 import patmos.Constants._
@@ -28,23 +29,23 @@ import ocp._
  */
 class NodeSPM(id: Int, nrCores: Int) extends Module {
 
-  val io = new Bundle() {
+  val io = IO(new Bundle() {
     val fromCore = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
     val toMem = new OcpCoreMasterPort(ADDR_WIDTH, DATA_WIDTH)
-  }
+  })
 
-  val idle :: rd :: wr :: Nil = Enum(UInt(), 3)
+  val idle :: rd :: wr :: Nil = Enum(3)
   val state = RegInit(idle)
-  val cnt = RegInit(UInt(0, log2Up(nrCores)))
+  val cnt = RegInit(0.U(log2Up(nrCores).W))
 
   // TODO: how to reset with a harmless IDLE command?
-  val masterReg = Reg(io.fromCore.M)
+  val masterReg = Reg(chiselTypeOf(io.fromCore.M))
 
-  cnt := Mux(cnt === UInt(nrCores - 1), UInt(0), cnt + UInt(1))
-  val enable = cnt === UInt(id)
+  cnt := Mux(cnt === (nrCores - 1).U, 0.U, cnt + 1.U)
+  val enable = cnt === id.U
   
   // this is not super nice to define the type this way
-  val dvaRepl = UInt(width = 2)
+  val dvaRepl = Wire(UInt(2.W))
   dvaRepl := OcpResp.NULL
 
   when(state === idle) {
@@ -78,23 +79,23 @@ class NodeSPM(id: Int, nrCores: Int) extends Module {
     io.toMem.M := masterReg
   }.otherwise {
     // a simple way to assign all 0?
-    io.toMem.M.Addr := UInt(0)
-    io.toMem.M.Data := UInt(0)
-    io.toMem.M.Cmd := UInt(0)
-    io.toMem.M.ByteEn := UInt(0)
+    io.toMem.M.Addr := 0.U
+    io.toMem.M.Data := 0.U
+    io.toMem.M.Cmd := 0.U
+    io.toMem.M.ByteEn := 0.U
   }
 }
 
-class SharedSPM(nrCores: Int, size: Int) extends Module {
+class SharedSPM(nrCores: Int, size: Int) extends CmpDevice(nrCores) {
 
-  val io = IO(new CmpIO(nrCores)) //Vec(nrCores, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))
+  val io = IO(new CmpIO(nrCores))
 
   val spm = Module(new Spm(size))
 
   val nd = new Array[NodeSPM](nrCores)
   for (i <- 0 until nrCores) {
     nd(i) = Module(new NodeSPM(i, nrCores))
-    nd(i).io.fromCore <> io.cores(i)
+    io.cores(i) <> nd(i).io.fromCore
     nd(i).io.toMem.S <> spm.io.S
   }
 

@@ -7,7 +7,7 @@
 
 package io
 
-import Chisel._
+import chisel3._
 
 import patmos.Constants._
 
@@ -23,8 +23,10 @@ object AauMpu extends DeviceObject {
 class AauMpu() extends CoreDevice() {
   
   override val io = new CoreDeviceIO() with patmos.HasPins {
-    override val pins = new Bundle() {
-      val data = Vec(10, Bits(INPUT, 32))
+    val pins: Bundle {
+      val data: Vec[UInt]
+    } = new Bundle() {
+      val data = Vec(10, Input(UInt(32.W)))
     }
   }
 
@@ -32,7 +34,7 @@ class AauMpu() extends CoreDevice() {
   // following clock cycle
   val dataReg = RegNext(io.pins.data(io.ocp.M.Addr(5,2)))
   
-  val respReg = Reg(init = OcpResp.NULL)
+  val respReg = RegInit(init = OcpResp.NULL)
   respReg := OcpResp.NULL
 
   // Set DVA on a read or write

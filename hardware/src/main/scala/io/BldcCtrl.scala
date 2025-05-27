@@ -38,7 +38,8 @@
 
 package io
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 //import Node._ //cannot be imported with chisel3
 
 import patmos.Constants._
@@ -60,7 +61,7 @@ object BldcCtrl extends DeviceObject {
 
   trait Pins {
     val bldcCtrlPins = new Bundle() {
-      val pwmOut = Bits(OUTPUT, motorCount)
+      val pwmOut = Output(UInt(motorCount.W))
     }
   }
 }
@@ -71,81 +72,81 @@ class BldcCtrl(clkFreq : Int, pwmFreq : Int, motorCount : Int) extends CoreDevic
 
   val counterWidth = log2Up(clkFreq / pwmFreq)
 
-  //val pwmOutReg = Reg(init = Bits(0, motorCount))
-  val counterReg = Reg(init = UInt(0, counterWidth))
+  //val pwmOutReg = Reg(init = 0.U(motorCount.W))
+  val counterReg = RegInit(init = 0.U(counterWidth.W))
 
-  val pwmOut0Reg = Reg(init = Bits(0, 1))
-  val pwmOut1Reg = Reg(init = Bits(0, 1))
-  val pwmOut2Reg = Reg(init = Bits(0, 1))
-  val pwmOut3Reg = Reg(init = Bits(0, 1))
+  val pwmOut0Reg = RegInit(init = 0.U(1.W))
+  val pwmOut1Reg = RegInit(init = 0.U(1.W))
+  val pwmOut2Reg = RegInit(init = 0.U(1.W))
+  val pwmOut3Reg = RegInit(init = 0.U(1.W))
 
-  val motor0Reg = Reg(init = UInt(0, counterWidth))
-  val motor1Reg = Reg(init = UInt(0, counterWidth))
-  val motor2Reg = Reg(init = UInt(0, counterWidth))
-  val motor3Reg = Reg(init = UInt(0, counterWidth))
+  val motor0Reg = RegInit(init = 0.U(counterWidth.W))
+  val motor1Reg = RegInit(init = 0.U(counterWidth.W))
+  val motor2Reg = RegInit(init = 0.U(counterWidth.W))
+  val motor3Reg = RegInit(init = 0.U(counterWidth.W))
 
-  val motor0tmpReg = Reg(init = UInt(0, counterWidth))
-  val motor1tmpReg = Reg(init = UInt(0, counterWidth))
-  val motor2tmpReg = Reg(init = UInt(0, counterWidth))
-  val motor3tmpReg = Reg(init = UInt(0, counterWidth))
+  val motor0tmpReg = RegInit(init = 0.U(counterWidth.W))
+  val motor1tmpReg = RegInit(init = 0.U(counterWidth.W))
+  val motor2tmpReg = RegInit(init = 0.U(counterWidth.W))
+  val motor3tmpReg = RegInit(init = 0.U(counterWidth.W))
 
-  when (counterReg === UInt(clkFreq / pwmFreq)) {
+  when (counterReg === (clkFreq / pwmFreq).U) {
     // update motor registers:
     motor0Reg := motor0tmpReg
     motor1Reg := motor1tmpReg
     motor2Reg := motor2tmpReg
     motor3Reg := motor3tmpReg
-    counterReg := UInt(0)
+    counterReg := 0.U
   }
   .otherwise {
-    counterReg := counterReg + UInt(1)
+    counterReg := counterReg + 1.U
   }
 
-  when (counterReg === UInt(0)) {
+  when (counterReg === 0.U) {
     // all outputs high:
-    //pwmOutReg := ~Bits(0, motorCount)
-    pwmOut0Reg := Bits(1)
-    pwmOut1Reg := Bits(1)
-    pwmOut2Reg := Bits(1)
-    pwmOut3Reg := Bits(1)
+    //pwmOutReg := ~0.U(motorCount.W)
+    pwmOut0Reg := 1.U
+    pwmOut1Reg := 1.U
+    pwmOut2Reg := 1.U
+    pwmOut3Reg := 1.U
   }
   when (counterReg === motor0Reg) {
-    //pwmOutReg := pwmOutReg & (~Bits(1, motorCount))
-    pwmOut0Reg := Bits(0)
+    //pwmOutReg := pwmOutReg & (~1.U(motorCount.W))
+    pwmOut0Reg := 0.U
   }
   when (counterReg === motor1Reg) {
-    //pwmOutReg := pwmOutReg & (~Bits(2, motorCount))
-    pwmOut1Reg := Bits(0)
+    //pwmOutReg := pwmOutReg & (~2.U(motorCount.W))
+    pwmOut1Reg := 0.U
   }
   when (counterReg === motor2Reg) {
-    //pwmOutReg := pwmOutReg & (~Bits(4, motorCount))
-    pwmOut2Reg := Bits(0)
+    //pwmOutReg := pwmOutReg & (~4.U(motorCount.W))
+    pwmOut2Reg := 0.U
   }
   when (counterReg === motor3Reg) {
-    //pwmOutReg := pwmOutReg & (~Bits(8, motorCount))
-    pwmOut3Reg := Bits(0)
+    //pwmOutReg := pwmOutReg & (~8.U(motorCount.W))
+    pwmOut3Reg := 0.U
   }
 
   // Default response
-  val respReg = Reg(init = OcpResp.NULL)
-  val readReg = Reg(init = Bits(0, counterWidth))
+  val respReg = RegInit(init = OcpResp.NULL)
+  val readReg = RegInit(init = 0.U(counterWidth.W))
   respReg := OcpResp.NULL
-  readReg := Bits(0)
+  readReg := 0.U
 
   // Read a register
   when(io.ocp.M.Cmd === OcpCmd.RD) {
     respReg := OcpResp.DVA
     switch(io.ocp.M.Addr(3,2)) {
-      is(Bits("b00")) {
+      is("b00".U) {
         readReg := motor0tmpReg
       }
-      is(Bits("b01")) {
+      is("b01".U) {
         readReg := motor1tmpReg
       }
-      is(Bits("b10")) {
+      is("b10".U) {
         readReg := motor2tmpReg
       }
-      is(Bits("b11")) {
+      is("b11".U) {
         readReg := motor3tmpReg
       }
     }
@@ -155,16 +156,16 @@ class BldcCtrl(clkFreq : Int, pwmFreq : Int, motorCount : Int) extends CoreDevic
   when(io.ocp.M.Cmd === OcpCmd.WR) {
     respReg := OcpResp.DVA
     switch(io.ocp.M.Addr(3,2)){
-      is(Bits("b00")) {
+      is("b00".U) {
         motor0tmpReg := io.ocp.M.Data(counterWidth - 1, 0)
       }
-      is(Bits("b01")) {
+      is("b01".U) {
         motor1tmpReg := io.ocp.M.Data(counterWidth - 1, 0)
       }
-      is(Bits("b10")) {
+      is("b10".U) {
         motor2tmpReg := io.ocp.M.Data(counterWidth - 1, 0)
       }
-      is(Bits("b11")) {
+      is("b11".U) {
         motor3tmpReg := io.ocp.M.Data(counterWidth - 1, 0)
       }
     }

@@ -12,13 +12,14 @@
 
 package cmp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos._
 import patmos.Constants._
 import ocp._
 
-class OwnSPM(nrCores: Int, nrSPMs: Int, size: Int) extends Module {
+class OwnSPM(nrCores: Int, nrSPMs: Int, size: Int) extends CmpDevice(nrCores) {
 
   val io = IO(new CmpIO(nrCores))
 
@@ -26,19 +27,21 @@ class OwnSPM(nrCores: Int, nrSPMs: Int, size: Int) extends Module {
   println("OwnSPM: cnt = " + nrSPMs + " bits = " + bits)
 
   val masters = Wire(Vec(nrSPMs, Vec(nrCores, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))))
+  masters := DontCare
   val spms = (0 until nrSPMs).map(i => Module(new Spm(size)))
-  val cmdOutReg = RegInit(Vec.fill(nrCores) {Bool(false)})
+  val cmdOutReg = RegInit(VecInit(Seq.fill(nrCores)(false.B)))
 
   for (s <- 0 until nrSPMs) {
     // And gate non-active masters.
     for (i <- 0 until nrCores) {
-      masters(s)(i).M.Addr := UInt(0)
-      masters(s)(i).M.Data := UInt(0)
-      masters(s)(i).M.Cmd := UInt(0)
-      masters(s)(i).M.ByteEn := UInt(0)
-      when(io.cores(i).M.Cmd =/= OcpCmd.IDLE && io.cores(i).M.Addr(12 + bits - 1, 12) === UInt(s)) {
+      masters(s)(i).M.Addr := 0.U
+      masters(s)(i).M.Data := 0.U
+      masters(s)(i).M.Cmd := 0.U
+      masters(s)(i).M.ByteEn := 0.U
+      when(io.cores(i).M.Cmd =/= OcpCmd.IDLE && io.cores(i).M.Addr(12 + bits - 1, 12) === s.U) {
         masters(s)(i).M := io.cores(i).M
       }
+      masters(s)(i).S.Resp := DontCare
     }
 
     // Or the master signals
@@ -50,14 +53,15 @@ class OwnSPM(nrCores: Int, nrSPMs: Int, size: Int) extends Module {
   
   // Cmd out?
   for (i <- 0 until nrCores) {
-    cmdOutReg(i) := Bool(false)
+    cmdOutReg(i) := false.B
     when(io.cores(i).M.Cmd =/= OcpCmd.IDLE) {
-      cmdOutReg(i) := Bool(true)
+      cmdOutReg(i) := true.B
     }
   }
   
   // Connect SPM out to output muxes and muxes to slave responses
-  val muxes = Vec(nrSPMs, Vec(nrSPMs, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)))
+  val muxes = Wire(Vec(nrSPMs, Vec(nrSPMs, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))))
+  muxes := DontCare
   for (i <- 0 until nrCores) {
     // val mux = Vec(nrSPMs, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))
     for (j <- 0 until nrSPMs) {
@@ -66,7 +70,7 @@ class OwnSPM(nrCores: Int, nrSPMs: Int, size: Int) extends Module {
     // And gate S response as DVA from one core might cause an end of a main memory
     // transaction from a different core.
     // TODO: check if really needed for the data
-    io.cores(i).S.Data := UInt(0)
+    io.cores(i).S.Data := 0.U
     io.cores(i).S.Resp := OcpResp.NULL
     when(cmdOutReg(i)) {
       io.cores(i).S := muxes(i)(RegNext(io.cores(i).M.Addr(12 + bits - 1, 12))).S

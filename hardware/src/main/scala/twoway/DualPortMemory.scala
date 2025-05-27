@@ -6,21 +6,22 @@
 
 package twoway
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 class Port(size: Int) extends Bundle {
-  val addr = UInt(width = log2Up(size)).asInput
-  val wrData = UInt(width = 32).asInput
-  val rdData = UInt(width = 32).asOutput
-  val wrEna = Bool().asInput
+  val addr = Input(UInt(log2Up(size).W))
+  val wrData = Input(UInt(32.W))
+  val rdData = Output(UInt(32.W))
+  val wrEna = Input(Bool())
 }
 
 class DualPort(size: Int) extends Bundle {
-  val rdAddr = UInt(width = log2Up(size)).asInput
-  val wrAddr = UInt(width = log2Up(size)).asInput
-  val wrData = UInt(width = 32).asInput
-  val rdData = UInt(width = 32).asOutput
-  val wrEna = Bool().asInput
+  val rdAddr = Input(UInt(log2Up(size).W))
+  val wrAddr = Input(UInt(log2Up(size).W))
+  val wrData = Input(UInt(32.W))
+  val rdData = Output(UInt(32.W))
+  val wrEna = Input(Bool())
 }
 
 class DualPortMemory(size: Int) extends Module {
@@ -28,9 +29,9 @@ class DualPortMemory(size: Int) extends Module {
     val port = new DualPort(size)
   }
 
-  val mem = Mem(UInt(width = 32), size)
+  val mem = Mem(size, UInt(32.W))
 
-  io.port.rdData := mem(Reg(next = io.port.rdAddr, init = UInt(0)))
+  io.port.rdData := mem(RegNext(next = io.port.rdAddr, init = 0.U))
   when(io.port.wrEna) {
     mem(io.port.wrAddr) := io.port.wrData
   }
@@ -46,9 +47,9 @@ class TrueDualPortMemory(size: Int) extends Module {
     val portB = new Port(size)
   }
 
-  val mem = Mem(UInt(width = 32), size)
+  val mem = Mem(size, UInt(32.W))
 
-  val regAddrA = Reg(io.portA.addr, init = UInt(0))
+  val regAddrA = RegNext(io.portA.addr, init = 0.U)
   when(io.portA.wrEna) {
     mem(io.portA.addr) := io.portA.wrData
   }.otherwise {
@@ -58,7 +59,7 @@ class TrueDualPortMemory(size: Int) extends Module {
 
   // This does not generate a true dual-ported memory,
   // but a register based implementation
-  val regAddrB = Reg(io.portB.addr, init = UInt(0))
+  val regAddrB = RegNext(io.portB.addr, init = 0.U)
   when(io.portB.wrEna) {
     mem(io.portB.addr) := io.portB.wrData
   }.otherwise {

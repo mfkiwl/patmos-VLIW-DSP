@@ -43,12 +43,7 @@
 #include "include/patio.h"
 #include "include/bootable.h"
 
-#define DELAY 1000*1
-
-//#define DEBUG
-//#define HEAVY_DEBUG
-
-//#define data ((_UNCACHED int *)0x00000080)
+#define DELAY 10*1
 
 int main(void)
 {
@@ -75,8 +70,12 @@ int main(void)
       boot_info->master.status = STATUS_BOOT;
     }
 
-    // download application
-    boot_info->master.entrypoint = download();
+    if(ENVINFO_PLATFORM == PLATFORM_EMULATOR)
+      boot_info->master.entrypoint = (entrypoint_t)ENVINFO_ENTRYPOINT;
+
+    // if entrypoint wasn't set by patemu, download application
+    if(boot_info->master.entrypoint == NULL)
+      boot_info->master.entrypoint = download();
   }
   else {
     boot_info->slave[get_cpuid()].status = STATUS_NULL;
@@ -132,14 +131,14 @@ int main(void)
 
     // Return may be "unclean" and leave registers clobbered.
     asm volatile ("" : :
-                  : "$r2", "$r3", "$r4", "$r5",
-                    "$r6", "$r7", "$r8", "$r9",
-                    "$r10", "$r11", "$r12", "$r13",
-                    "$r14", "$r15", "$r16", "$r17",
-                    "$r18", "$r19", "$r20", "$r21",
-                    "$r22", "$r23", "$r24", "$r25",
-                    "$r26", "$r27", "$r28", "$r29",
-                    "$r30", "$r31");
+                  : "r2", "r3", "r4", "r5",
+                    "r6", "r7", "r8", "r9",
+                    "r10", "r11", "r12", "r13",
+                    "r14", "r15", "r16", "r17",
+                    "r18", "r19", "r20", "r21",
+                    "r22", "r23", "r24", "r25",
+                    "r26", "r27", "r28", "r29",
+                    "r30", "r31");
 
     // enable local mode again
     local_mode();
@@ -157,6 +156,11 @@ int main(void)
         }
       }
     }
+
+    // if running in emulator, signal exit and hang until emulator exits
+    ENVINFO_EXITCODE = retval;
+    ENVINFO_EXIT = 1;
+    while(ENVINFO_PLATFORM == PLATFORM_EMULATOR) { }
 
     // Print exit magic and return code
     WRITECHAR('\0');
@@ -182,8 +186,7 @@ int main(void)
     
     boot_info->slave[get_cpuid()].status = STATUS_NULL;
   }
-  
-  
+
   // clear caches and loop back
   inval_dcache();
   inval_mcache();

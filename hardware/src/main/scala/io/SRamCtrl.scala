@@ -13,7 +13,8 @@ package io
 
 import scala.math._
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import ocp._
 
@@ -35,19 +36,33 @@ object SRamCtrl extends DeviceObject {
   }
 
   trait Pins extends patmos.HasPins {
-    override val pins = new Bundle {
+    val pins: Bundle {
+      val ramOut: Bundle {
+        val addr: UInt
+        val doutEna: UInt
+        val dout: UInt
+        val nce: UInt
+        val noe: UInt
+        val nwe: UInt
+        val nlb: UInt
+        val nub: UInt
+      }
+      val ramIn: Bundle {
+        val din: UInt
+      }
+    } = new Bundle {
       val ramOut = Output(new Bundle {
-        val addr = Bits(width = sramAddrWidth)
-        val doutEna = Bits(width = 1)
-        val dout = Bits(width = sramDataWidth)
-        val nce = Bits(width = 1)
-        val noe = Bits(width = 1)
-        val nwe = Bits(width = 1)
-        val nlb = Bits(width = 1)
-        val nub = Bits(width = 1)
+        val addr = UInt(sramAddrWidth.W)
+        val doutEna = UInt(1.W)
+        val dout = UInt(sramDataWidth.W)
+        val nce = UInt(1.W)
+        val noe = UInt(1.W)
+        val nwe = UInt(1.W)
+        val nlb = UInt(1.W)
+        val nub = UInt(1.W)
       })
       val ramIn = Input(new Bundle {
-        val din = Bits(width = sramDataWidth)
+        val din = UInt(sramDataWidth.W)
       })
     }
   }
@@ -60,12 +75,12 @@ class SRamCtrl( ocpAddrWidth    : Int,
                 singleCycleRead : Boolean=false,
                 writeWaitCycles : Int=1) extends BurstDevice(ocpAddrWidth) {
 
-  override val io = new BurstDeviceIO(ocpAddrWidth) with SRamCtrl.Pins
+  override val io = IO(new BurstDeviceIO(ocpAddrWidth) with SRamCtrl.Pins)
 
   // Checks for input parameters
-  assert(Bool(DATA_WIDTH % sramDataWidth == 0),"DATA_WIDTH is not a multiple of sramDataWidth")
-  assert(Bool(sramAddrWidth <= ocpAddrWidth),"ocpAddrWidth cannot access the full sram")
-  assert(Bool(isPow2(sramDataWidth/8)),"number of bytes per transaction to sram is not a power of 2")
+  require((DATA_WIDTH % sramDataWidth == 0),"DATA_WIDTH is not a multiple of sramDataWidth")
+  require((sramAddrWidth <= ocpAddrWidth),"ocpAddrWidth cannot access the full sram")
+  require(isPow2(sramDataWidth/8),"number of bytes per transaction to sram is not a power of 2")
 
   // Helper functions
   // log2up is a standard function but log2up(1)=1 and it should be 0
@@ -76,20 +91,20 @@ class SRamCtrl( ocpAddrWidth    : Int,
   val BYTESPERTRAN = sramDataWidth/8
 
   // State type and variable
-  val sReady :: sReadExe :: sReadExe2 :: sReadRet :: sWriteRec :: sWriteExe :: sWriteExe2 :: sWriteRet :: Nil = Enum(UInt(), 8)
-  val stateReg = Reg(init = sReady)
+  val sReady :: sReadExe :: sReadExe2 :: sReadRet :: sWriteRec :: sWriteExe :: sWriteExe2 :: sWriteRet :: Nil = Enum(8)
+  val stateReg = RegInit(init = sReady)
 
   // Internal Registers
-  val mAddrReg = Reg(Bits(width = sramAddrWidth))
-  val rdBufferReg = Reg(Vec(TRANSPERCMD, Bits(width=sramDataWidth)))
+  val mAddrReg = Reg(UInt(sramAddrWidth.W))
+  val rdBufferReg = Reg(Vec(TRANSPERCMD, UInt(sramDataWidth.W)))
   val wrBufferReg = Reg(Vec(TRANSPERCMD, new Trans(BYTESPERTRAN,sramDataWidth)))
-  val transCountReg = Reg(init = UInt(0,width=log2upNew(TRANSPERCMD)))
-  val wordCountReg = Reg(init = UInt(0,width=log2upNew(ocpBurstLen)))
-  val waitCountReg = Reg(init = UInt(0,width=log2upNew(writeWaitCycles+1)))
+  val transCountReg = RegInit(init = 0.U(log2upNew(TRANSPERCMD).W))
+  val wordCountReg = RegInit(init = 0.U(log2upNew(ocpBurstLen).W))
+  val waitCountReg = RegInit(init = 0.U(log2upNew(writeWaitCycles+1).W))
   // Output Registers
-  val addrReg = Reg(Bits(width = sramAddrWidth))
+  val addrReg = Reg(UInt(sramAddrWidth.W))
   val doutEnaReg = Reg(Bits())
-  val doutReg = Reg(Bits(width = DATA_WIDTH))
+  val doutReg = Reg(UInt(DATA_WIDTH.W))
   val nceReg = Reg(Bits())
   val noeReg = Reg(Bits())
   val nweReg = Reg(Bits())
@@ -98,23 +113,23 @@ class SRamCtrl( ocpAddrWidth    : Int,
 
   // Default values for ocp io.ocp.S port
   io.ocp.S.Resp := OcpResp.NULL
-  io.ocp.S.CmdAccept := Bits(1)
-  io.ocp.S.DataAccept := Bits(1)
+  io.ocp.S.CmdAccept := 1.U
+  io.ocp.S.DataAccept := 1.U
   val data = for(i <- 0 until TRANSPERWORD)
-             yield rdBufferReg(wordCountReg ## UInt(i))
+             yield rdBufferReg(wordCountReg ## i.U)
   io.ocp.S.Data := data.reduceLeft((x,y) => y ## x)
 
   // Default values for sRamCtrlPins.ramOut port
   addrReg := mAddrReg
-  doutEnaReg := Bits(0)
+  doutEnaReg := 0.U
   doutReg := wrBufferReg(0).data
-  nceReg := Bits(0)
-  noeReg := Bits(1)
-  nweReg := Bits(1)
-  nlbReg := Bits(1)
-  nubReg := Bits(1)
+  nceReg := 0.U
+  noeReg := 1.U
+  nweReg := 1.U
+  nlbReg := 1.U
+  nubReg := 1.U
 
-  waitCountReg := UInt(0)
+  waitCountReg := 0.U
 
   when(stateReg === sReady) {
     for( i <- 0 until TRANSPERWORD) {
@@ -128,116 +143,116 @@ class SRamCtrl( ocpAddrWidth    : Int,
         stateReg := sReadExe
       }
       when(io.ocp.M.Cmd === OcpCmd.WR) {
-        wordCountReg := UInt(1) // The first ocp data word is already in wrBufferReg
+        wordCountReg := 1.U // The first ocp data word is already in wrBufferReg
         stateReg := sWriteRec
       }
     }
   }
   when(stateReg === sReadExe) {
-    noeReg := Bits(0)
-    nceReg := Bits(0)
-    nubReg := Bits(0)
-    nlbReg := Bits(0)
+    noeReg := 0.U
+    nceReg := 0.U
+    nubReg := 0.U
+    nlbReg := 0.U
     if (singleCycleRead){
-      addrReg := mAddrReg + UInt(1)
-      mAddrReg := mAddrReg + UInt(1)
+      addrReg := mAddrReg + 1.U
+      mAddrReg := mAddrReg + 1.U
       for (i <- 0 until TRANSPERCMD-1) { rdBufferReg(i) := rdBufferReg(i+1) }
       rdBufferReg(TRANSPERCMD-1) := io.pins.ramIn.din
-      transCountReg := transCountReg + UInt(1)
+      transCountReg := transCountReg + 1.U
       stateReg := sReadExe
-      when(transCountReg === UInt(TRANSPERCMD-1)){
+      when(transCountReg === (TRANSPERCMD-1).U){
         stateReg := sReadRet
-        transCountReg := UInt(0)
+        transCountReg := 0.U
       }
     } else {
       stateReg := sReadExe2
     }
   }
   when(stateReg === sReadExe2) {
-    noeReg := Bits(0)
-    nceReg := Bits(0)
-    nubReg := Bits(0)
-    nlbReg := Bits(0)
-    addrReg := mAddrReg + UInt(1)
-    mAddrReg := mAddrReg + UInt(1)
+    noeReg := 0.U
+    nceReg := 0.U
+    nubReg := 0.U
+    nlbReg := 0.U
+    addrReg := mAddrReg + 1.U
+    mAddrReg := mAddrReg + 1.U
     for (i <- 0 until TRANSPERCMD-1) { rdBufferReg(i) := rdBufferReg(i+1) }
     rdBufferReg(TRANSPERCMD-1) := io.pins.ramIn.din
-    transCountReg := transCountReg + UInt(1)
+    transCountReg := transCountReg + 1.U
     stateReg := sReadExe
-    when(transCountReg === UInt(TRANSPERCMD-1)){
+    when(transCountReg === (TRANSPERCMD-1).U){
       stateReg := sReadRet
-      transCountReg := UInt(0)
+      transCountReg := 0.U
     }
   }
   when(stateReg === sReadRet) {
     io.ocp.S.Resp := OcpResp.DVA
-    wordCountReg := wordCountReg + UInt(1)
-    when(wordCountReg === UInt(ocpBurstLen-1)){
+    wordCountReg := wordCountReg + 1.U
+    when(wordCountReg === (ocpBurstLen-1).U){
       stateReg := sReady
-      wordCountReg := UInt(0)
+      wordCountReg := 0.U
     }
   }
   when(stateReg === sWriteRec) {
     for(i <- 0 until TRANSPERWORD) {
-      wrBufferReg(wordCountReg ## UInt(i)).byteEna :=
+      wrBufferReg(wordCountReg ## i.U).byteEna :=
         io.ocp.M.DataByteEn((i+1)*BYTESPERTRAN-1,i*BYTESPERTRAN)
-      wrBufferReg(wordCountReg ## UInt(i)).data := 
+      wrBufferReg(wordCountReg ## i.U).data :=
         io.ocp.M.Data((i+1)*sramDataWidth-1,i*sramDataWidth)
     }
     doutReg := wrBufferReg(0).data
-    doutEnaReg := Bits(1)
-    when(io.ocp.M.DataValid === Bits(1)){
-      wordCountReg := wordCountReg + UInt(1)
-      when(wordCountReg === UInt(ocpBurstLen-1)){
+    doutEnaReg := 1.U
+    when(io.ocp.M.DataValid === 1.U){
+      wordCountReg := wordCountReg + 1.U
+      when(wordCountReg === (ocpBurstLen-1).U){
         stateReg := sWriteExe
-        wordCountReg := UInt(0)
-        waitCountReg := UInt(1)
+        wordCountReg := 0.U
+        waitCountReg := 1.U
       }
     } otherwise {
       stateReg := sWriteRec
     }
-    when(wordCountReg === UInt(ocpBurstLen-1)){
-      nceReg := Bits(0)
-      nweReg := Bits(0)
+    when(wordCountReg === (ocpBurstLen-1).U){
+      nceReg := 0.U
+      nweReg := 0.U
       nubReg := !wrBufferReg(0).byteEna(1)
       nlbReg := !wrBufferReg(0).byteEna(0)
     }
   }
   when(stateReg === sWriteExe) {
-    nceReg := Bits(0)
-    nweReg := Bits(0)
+    nceReg := 0.U
+    nweReg := 0.U
     doutReg := wrBufferReg(transCountReg).data
-    doutEnaReg := Bits(1)
-    when(waitCountReg < UInt(writeWaitCycles)){
-      waitCountReg := waitCountReg + UInt(1)
+    doutEnaReg := 1.U
+    when(waitCountReg < writeWaitCycles.U){
+      waitCountReg := waitCountReg + 1.U
       nubReg := !wrBufferReg(transCountReg).byteEna(1)
       nlbReg := !wrBufferReg(transCountReg).byteEna(0)
       stateReg := sWriteExe
     } otherwise {
-      waitCountReg := UInt(0)
-      nubReg := Bits(1)
-      nlbReg := Bits(1)
+      waitCountReg := 0.U
+      nubReg := 1.U
+      nlbReg := 1.U
       stateReg := sWriteExe2
     }
   }
   when(stateReg === sWriteExe2) {
-    when(transCountReg < UInt(TRANSPERCMD-1)){
-      nceReg := Bits(0)
-      nweReg := Bits(0)
-      nubReg := !wrBufferReg(transCountReg+UInt(1)).byteEna(1)
-      nlbReg := !wrBufferReg(transCountReg+UInt(1)).byteEna(0)
-      doutReg := wrBufferReg(transCountReg+UInt(1)).data
-      doutEnaReg := Bits(1)
-      addrReg := mAddrReg + UInt(1)
-      mAddrReg := mAddrReg + UInt(1)
-      transCountReg := transCountReg + UInt(1)
-      waitCountReg := UInt(1)
+    when(transCountReg < (TRANSPERCMD-1).U){
+      nceReg := 0.U
+      nweReg := 0.U
+      nubReg := !wrBufferReg(transCountReg+1.U).byteEna(1)
+      nlbReg := !wrBufferReg(transCountReg+1.U).byteEna(0)
+      doutReg := wrBufferReg(transCountReg+1.U).data
+      doutEnaReg := 1.U
+      addrReg := mAddrReg + 1.U
+      mAddrReg := mAddrReg + 1.U
+      transCountReg := transCountReg + 1.U
+      waitCountReg := 1.U
       stateReg := sWriteExe
     }
-    when(transCountReg === UInt(TRANSPERCMD-1)){
+    when(transCountReg === (TRANSPERCMD-1).U){
       stateReg := sWriteRet
-      transCountReg := UInt(0)
-      waitCountReg := UInt(0)
+      transCountReg := 0.U
+      waitCountReg := 0.U
     }
   }
   when(stateReg === sWriteRet) {
@@ -256,14 +271,9 @@ class SRamCtrl( ocpAddrWidth    : Int,
 
 
   class Trans(bytesEnaWidth: Int, dataWidth: Int) extends Bundle {
-    val byteEna = Bits(width=bytesEnaWidth)
-    val data = Bits(width=dataWidth)
+    val byteEna = UInt(bytesEnaWidth.W)
+    val data = UInt(dataWidth.W)
 
-    // This does not really clone, but Data.clone doesn't either
-    override def cloneType() = {
-      val res = new Trans(bytesEnaWidth, dataWidth)
-      res.asInstanceOf[this.type]
-    }
   }
 }
 
@@ -274,6 +284,6 @@ object SRamMain {
   def main(args: Array[String]): Unit = {
     val chiselArgs = args.slice(1,args.length)
     val ocpAddrWidth = args(0).toInt
-    chiselMain(chiselArgs, () => Module(new SRamCtrl(ocpAddrWidth)))
+    emitVerilog(new SRamCtrl(ocpAddrWidth), chiselArgs)
   }
 }

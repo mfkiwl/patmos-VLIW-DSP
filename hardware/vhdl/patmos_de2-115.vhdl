@@ -68,9 +68,11 @@ architecture rtl of patmos_top is
   signal res_reg1, res_reg2 : std_logic;
   signal res_cnt            : unsigned(2 downto 0) := "000"; -- for the simulation
 
-    -- sram signals for tristate inout
-    signal sram_out_dout_ena : std_logic;
-    signal sram_out_dout : std_logic_vector(15 downto 0);
+  -- sram signals for tristate inout
+  signal sram_out_dout_ena : std_logic;
+  signal sram_out_dout : std_logic_vector(15 downto 0);
+
+  signal dummy : std_logic;
 
   attribute altera_attribute : string;
   attribute altera_attribute of res_cnt : signal is "POWER_UP_LEVEL=LOW";

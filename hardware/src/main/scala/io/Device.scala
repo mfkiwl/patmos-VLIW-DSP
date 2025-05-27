@@ -7,7 +7,7 @@
 
 package io
 
-import Chisel._
+import chisel3._
 
 import ocp._
 
@@ -15,7 +15,7 @@ import patmos.Constants._
 
 abstract class DeviceObject() {
   // every device object must have methods "create" and "init"
-  def init(params: Map[String, String])
+  def init(params: Map[String, String]): Unit
   def create(params: Map[String, String]) : Device
 
   // helper functions for parameter parsing
@@ -58,29 +58,29 @@ abstract class DeviceObject() {
 }
 
 abstract class Device() extends Module() {
-  //override val io = IO(new InternalIO()) // Nested IO wrapping gives issues. As io is overriden alsways it has been commented out
+  // val io = IO(new InternalIO()) // Nested IO wrapping gives issues. As io is overriden alsways it has been commented out
 }
 
 class InternalIO() extends Bundle() with patmos.HasSuperMode
 
-class CoreDevice() extends Device() {
-  override val io = new CoreDeviceIO()
+abstract class CoreDevice() extends Device() {
+  val io: CoreDeviceIO
 }
 
 class CoreDeviceIO() extends InternalIO() {
   val ocp = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
 }
 
-class IODevice() extends Device() {
-  override val io = IO(new IODeviceIO())
+abstract class IODevice() extends Device() {
+  val io: IODeviceIO
 }
 
 class IODeviceIO() extends InternalIO() {
   val ocp = new OcpIOSlavePort(ADDR_WIDTH, DATA_WIDTH)
 }
 
-class BurstDevice(addrBits: Int) extends Device() {
-  override val io = new BurstDeviceIO(addrBits)
+abstract class BurstDevice(addrBits: Int) extends Device() {
+  val io: BurstDeviceIO
 }
 
 class BurstDeviceIO(val addrBits: Int) extends InternalIO() {

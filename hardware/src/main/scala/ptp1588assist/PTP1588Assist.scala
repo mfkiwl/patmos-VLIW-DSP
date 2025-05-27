@@ -77,9 +77,8 @@ class PTP1588Assist(addrWidth: Int = ADDR_WIDTH, dataWidth: Int = DATA_WIDTH, cl
   // Led connections
   val dispRegVec = RegInit(VecInit(Seq.fill(8)(0.U(7.W))))
   for (i <- 0 until 7) {
-    val decoder = Module(new BCDToSevenSegDecoder).io
+    val decoder = Module(new BCDToSevenSegDecoder(BCDToSevenSegDecoder.ActiveLow)).io
     decoder.bcdData := rtc.io.ptpTimestamp(39 + i * 4, 32 + i * 4)
-    decoder.segPolarity := false.B
     dispRegVec(i) := decoder.segData
   }
   io.rtcHexDisp := dispRegVec
@@ -90,5 +89,5 @@ class PTP1588Assist(addrWidth: Int = ADDR_WIDTH, dataWidth: Int = DATA_WIDTH, cl
 }
 
 object PTP1588Assist extends App {
-  chisel3.Driver.execute(Array("--target-dir", "generated/PTP1588Assist"), () => new PTP1588Assist(addrWidth = 16, dataWidth = 32, clockFreq = 80000000))
+  (new chisel3.stage.ChiselStage).emitVerilog(new PTP1588Assist(addrWidth = 16, dataWidth = 32, clockFreq = 80000000), Array("--target-dir", "generated/PTP1588Assist"))
 }

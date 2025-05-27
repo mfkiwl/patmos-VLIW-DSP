@@ -7,7 +7,8 @@
 
 package datacache
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
 import patmos.DataCachePerf
@@ -16,16 +17,10 @@ import patmos.MemBlockIO
 
 import ocp._
 
-class DirectMappedCache(size: Int, lineSize: Int) extends Module {
-  val io = IO(new Bundle {
-    val master = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
-    val slave = new OcpBurstMasterPort(ADDR_WIDTH, DATA_WIDTH, lineSize/4)
-    val invalidate = Bool(INPUT)
-    val perf = new DataCachePerf()
-  })
+class DirectMappedCache(size: Int, lineSize: Int) extends DCacheType(lineSize/4) {
 
-  io.perf.hit := Bool(false)
-  io.perf.miss := Bool(false)
+  io.perf.hit := false.B
+  io.perf.miss := false.B
 
   val addrBits = log2Up(size / BYTES_PER_WORD)
   val lineBits = log2Up(lineSize)
@@ -34,25 +29,24 @@ class DirectMappedCache(size: Int, lineSize: Int) extends Module {
   val tagCount = size / lineSize
 
   // Register signals from master
-  val masterReg = Reg(io.master.M)
-  masterReg := io.master.M
+  val masterReg = RegNext(io.master.M)
 
   // Generate memories
   val tagMem = MemBlock(tagCount, tagWidth)
-  val tagVMem = RegInit(Vec.fill(tagCount) { Bool(false) })
+  val tagVMem = RegInit(VecInit(Seq.fill(tagCount)(false.B)))
   val mem = new Array[MemBlockIO](BYTES_PER_WORD)
   for (i <- 0 until BYTES_PER_WORD) {
     mem(i) = MemBlock(size / BYTES_PER_WORD, BYTE_WIDTH).io
   }
 
   val tag = tagMem.io(io.master.M.Addr(addrBits + 1, lineBits))
-  val tagV = Reg(next = tagVMem(io.master.M.Addr(addrBits + 1, lineBits)))
+  val tagV = RegNext(next = tagVMem(io.master.M.Addr(addrBits + 1, lineBits)))
   val tagValid = tagV && tag === Cat(masterReg.Addr(ADDR_WIDTH-1, addrBits+2))
 
   val fillReg = Reg(Bool())
 
-  val wrAddrReg = Reg(Bits(width = addrBits))
-  val wrDataReg = Reg(Bits(width = DATA_WIDTH))
+  val wrAddrReg = Reg(UInt(addrBits.W))
+  val wrDataReg = Reg(UInt(DATA_WIDTH.W))
 
   wrAddrReg := io.master.M.Addr(addrBits + 1, 2)
   wrDataReg := io.master.M.Data
@@ -73,43 +67,43 @@ class DirectMappedCache(size: Int, lineSize: Int) extends Module {
                           OcpResp.DVA, OcpResp.NULL)
 
   // State machine for misses
-  val idle :: hold :: fill :: respond :: Nil = Enum(UInt(), 4)
-  val stateReg = Reg(init = idle)
+  val idle :: hold :: fill :: respond :: Nil = Enum(4)
+  val stateReg = RegInit(init = idle)
 
-  val burstCntReg = Reg(init = UInt(0, lineBits-2))
-  val missIndexReg = Reg(UInt(lineBits-2))
+  val burstCntReg = RegInit(init = 0.U((lineBits-2).W))
+  val missIndexReg = Reg(chiselTypeOf((lineBits-2).U))
 
   // Register to delay response
-  val slaveReg = Reg(io.master.S)
+  val slaveReg = Reg(chiselTypeOf(io.master.S))
 
   // Default values
   io.slave.M.Cmd := OcpCmd.IDLE
   io.slave.M.Addr := Cat(masterReg.Addr(ADDR_WIDTH-1, lineBits),
-                         Fill(lineBits, Bits(0)))
-  io.slave.M.Data := Bits(0)
-  io.slave.M.DataValid := Bits(0)
-  io.slave.M.DataByteEn := Bits(0)
+                         Fill(lineBits, 0.B))
+  io.slave.M.Data := 0.U
+  io.slave.M.DataValid := 0.U
+  io.slave.M.DataByteEn := 0.U
 
-  fillReg := Bool(false)
+  fillReg := false.B
 
   // Record a hit
   when(tagValid && masterReg.Cmd === OcpCmd.RD) {
-    io.perf.hit := Bool(true)
+    io.perf.hit := true.B
   }
 
   // Start handling a miss
   when(!tagValid && masterReg.Cmd === OcpCmd.RD) {
-    tagVMem(masterReg.Addr(addrBits + 1, lineBits)) := Bool(true)
+    tagVMem(masterReg.Addr(addrBits + 1, lineBits)) := true.B
     missIndexReg := masterReg.Addr(lineBits-1, 2).asUInt
     io.slave.M.Cmd := OcpCmd.RD
-    when(io.slave.S.CmdAccept === Bits(1)) {
+    when(io.slave.S.CmdAccept === 1.U) {
       stateReg := fill
     }
     .otherwise {
       stateReg := hold
     }
     masterReg.Addr := masterReg.Addr
-    io.perf.miss := Bool(true)
+    io.perf.miss := true.B
   }
   tagMem.io <= (!tagValid && masterReg.Cmd === OcpCmd.RD,
                 masterReg.Addr(addrBits + 1, lineBits),
@@ -118,7 +112,7 @@ class DirectMappedCache(size: Int, lineSize: Int) extends Module {
   // Hold read command
   when(stateReg === hold) {
     io.slave.M.Cmd := OcpCmd.RD
-    when(io.slave.S.CmdAccept === Bits(1)) {
+    when(io.slave.S.CmdAccept === 1.U) {
       stateReg := fill
     }
     .otherwise {
@@ -131,18 +125,18 @@ class DirectMappedCache(size: Int, lineSize: Int) extends Module {
     wrAddrReg := Cat(masterReg.Addr(addrBits + 1, lineBits), burstCntReg)
 
     when(io.slave.S.Resp =/= OcpResp.NULL) {
-      fillReg := Bool(true)
+      fillReg := true.B
       wrDataReg := io.slave.S.Data
       when(burstCntReg === missIndexReg) {
         slaveReg := io.slave.S
       }
-      when(burstCntReg === UInt(lineSize/4-1)) {
+      when(burstCntReg === (lineSize/4-1).U) {
         stateReg := respond
       }
-      burstCntReg := burstCntReg + UInt(1)
+      burstCntReg := burstCntReg + 1.U
     }
     when(io.slave.S.Resp === OcpResp.ERR) {
-      tagVMem(masterReg.Addr(addrBits + 1, lineBits)) := Bool(false)
+      tagVMem(masterReg.Addr(addrBits + 1, lineBits)) := false.B
     }
     masterReg.Addr := masterReg.Addr
   }
@@ -154,6 +148,10 @@ class DirectMappedCache(size: Int, lineSize: Int) extends Module {
 
   // reset valid bits
   when (io.invalidate) {
-    tagVMem.map(_ := Bool(false))
+    tagVMem.map(_ := false.B)
   }
+}
+
+object DirectMappedCache extends App {
+  (new chisel3.stage.ChiselStage).emitVerilog(new DirectMappedCache(4096, 32))
 }

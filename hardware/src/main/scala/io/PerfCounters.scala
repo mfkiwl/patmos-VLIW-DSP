@@ -8,7 +8,7 @@
 
 package io
 
-import Chisel._
+import chisel3._
 
 import patmos.Constants._
 import patmos.PerfCounterIO
@@ -27,16 +27,16 @@ object PerfCounters extends DeviceObject {
 class PerfCounters() extends CoreDevice() {
 
   override val io = new CoreDeviceIO() with patmos.HasPerfCounter {
-    override val perf = new PerfCounterIO().asInput
+    override val perf = Input(new PerfCounterIO())
   }
 
-  val masterReg = Reg(next = io.ocp.M)
+  val masterReg = RegNext(next = io.ocp.M)
 
   // Default response
-  val resp = Bits()
-  val data = Bits(width = DATA_WIDTH)
+  val resp = UInt()
+  val data = UInt(DATA_WIDTH.W)
   resp := OcpResp.NULL
-  data := Bits(0)
+  data := 0.U
 
   // Ignore writes
   when(masterReg.Cmd === OcpCmd.WR) {
@@ -45,7 +45,7 @@ class PerfCounters() extends CoreDevice() {
 
   val PERFCOUNTER_COUNT = 10
 
-  val inputVec = Vec.fill(PERFCOUNTER_COUNT) { Reg(Bool()) }
+  val inputVec = RegInit(VecInit(Seq.fill(PERFCOUNTER_COUNT)(true.B)))
   inputVec(0) := io.perf.ic.hit
   inputVec(1) := io.perf.ic.miss
   inputVec(2) := io.perf.dc.hit
@@ -57,10 +57,10 @@ class PerfCounters() extends CoreDevice() {
   inputVec(8) := io.perf.mem.read
   inputVec(9) := io.perf.mem.write
 
-  val counterVec = RegInit(Vec.fill(PERFCOUNTER_COUNT) { UInt(0, width = DATA_WIDTH) })
+  val counterVec = RegInit(VecInit(Seq.fill(PERFCOUNTER_COUNT)(0.U(DATA_WIDTH.W))))
   for (i <- 0 until PERFCOUNTER_COUNT) {
     when (inputVec(i)) {
-      counterVec(i) := counterVec(i) + UInt(1)
+      counterVec(i) := counterVec(i) + 1.U
     }
   }
 

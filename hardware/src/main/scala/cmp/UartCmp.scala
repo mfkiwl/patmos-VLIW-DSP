@@ -6,43 +6,67 @@
 
 package cmp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import ocp._
 import patmos.Constants._
 import patmos._
 import io.Uart
 
-class CmpIO(val corecnt : Int) extends Bundle
-{
-  val cores = Vec(corecnt, new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH))
-}
 
-class UartCmp(corecnt: Int, clk_freq: Int, baud_rate: Int, fifoDepth: Int) extends Module {
 
-  override val io = IO(new CmpIO(corecnt) with patmos.HasPins {
-    override val pins = new Bundle {
-      val tx = Bits(OUTPUT, 1)
-      val rx = Bits(INPUT, 1)
+
+class UartCmp(corecnt: Int, clk_freq: Int, baud_rate: Int, fifoDepth: Int) extends CmpDevice(corecnt) {
+
+
+  val io = IO(new CmpIO(corecnt) with patmos.HasPins {
+    val pins: Bundle {
+      val tx: UInt
+      val rx: UInt
+    } = new Bundle {
+      val tx = Output(UInt(1.W))
+      val rx = Input(UInt(1.W))
     }
   })
 
+
+
+/*
+  val abc = IO(new Bundle {
+    val tx = Output(UInt(1.W))
+    val rx = Input(UInt(1.W))
+  })
+
+ */
+  /*
+  val pins = IO(new Bundle() with HasPins {
+    override val pins: Bundle = new Bundle {
+      val tx = Output(UInt(1.W))
+      val rx = Input(UInt(1.W))
+    }
+  })
+
+   */
+
   val uart = Module(new Uart(clk_freq,baud_rate,fifoDepth))
+
+  uart.io.superMode := false.B
 
   io.pins <> uart.io.pins
 
   uart.io.ocp.M := PriorityMux(io.cores.map(e => (e.M.Cmd =/= OcpCmd.IDLE, e.M)))
   
   for (i <- 0 until corecnt) {
-    val cmdReg = Reg(init = Bool(false))
+    val cmdReg = RegInit(init = false.B)
     when(io.cores(i).M.Cmd =/= OcpCmd.IDLE) {
-      cmdReg := Bool(true)
+      cmdReg := true.B
     }.elsewhen(uart.io.ocp.S.Resp === OcpResp.DVA) {
-      cmdReg := Bool(false)
+      cmdReg := false.B
     }
     
     io.cores(i).S.Data := uart.io.ocp.S.Data
     io.cores(i).S.Resp := uart.io.ocp.S.Resp
-    when(cmdReg =/= Bool(true)) {
+    when(cmdReg =/= true.B) {
       io.cores(i).S.Resp := OcpResp.NULL
     }
   }

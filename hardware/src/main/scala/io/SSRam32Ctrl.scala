@@ -7,7 +7,8 @@
 
 package io
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import patmos.Constants._
 import ocp._
 
@@ -17,22 +18,22 @@ import scala.collection.mutable.HashMap
  Connections to the SRAM
 */
 class RamInType extends Bundle() {
-  val din = Bits(width = 32)
+  val din = UInt(32.W)
 }
 class RamOutType(addrBits: Int) extends Bundle() {
-  val addr = Bits(width = addrBits)
-  val doutEna = Bits(width = 1) //needed to drive tristate in top level
-  val nadsc = Bits(width = 1)
-  val noe = Bits(width = 1)
-  val nbwe = Bits(width = 1)
-  val nbw = Bits(width = 4)
-  val ngw = Bits(width = 1)
-  val nce1 = Bits(width = 1)
-  val ce2 = Bits(width = 1)
-  val nce3 = Bits(width = 1)
-  val nadsp = Bits(width = 1)
-  val nadv = Bits(width = 1)
-  val dout = Bits(width = 32)
+  val addr = UInt(addrBits.W)
+  val doutEna = UInt(1.W) //needed to drive tristate in top level
+  val nadsc = UInt(1.W)
+  val noe = UInt(1.W)
+  val nbwe = UInt(1.W)
+  val nbw = UInt(4.W)
+  val ngw = UInt(1.W)
+  val nce1 = UInt(1.W)
+  val ce2 = UInt(1.W)
+  val nce3 = UInt(1.W)
+  val nadsp = UInt(1.W)
+  val nadv = UInt(1.W)
+  val dout = UInt(32.W)
 }
 
 object SSRam32Ctrl extends DeviceObject {
@@ -59,43 +60,46 @@ class SSRam32Ctrl (
    burstLen : Int = 4
 ) extends BurstDevice(addrBits) {
   override val io = new BurstDeviceIO(addrBits) with patmos.HasPins {
-    override val pins = new Bundle() {
-      val ramOut = new RamOutType(addrBits-2).asOutput
-      val ramIn = new RamInType().asInput
+    val pins: Bundle {
+      val ramOut: RamOutType
+      val ramIn: RamInType
+    } = new Bundle() {
+      val ramOut = Output(new RamOutType(addrBits-2))
+      val ramIn = Input(new RamInType())
     }
   }
 
-  val idle :: rd1 :: wr1 :: Nil = Enum(UInt(), 3)
-  val ssramState = Reg(init = idle)
-  val waitState = Reg(UInt(width = 4))
-  val burstCnt = Reg(UInt(width = log2Up(burstLen)))
-  val rdDataEna = Reg(Bits(width = 1))
-  val rdData = Reg(Bits(width = 32))
-  val resp = Reg(Bits(width = 2))
-  val ramDout = Reg(Bits(width = 32))
-  val address = Reg(Bits(width = addrBits-2))
-  val doutEna = Reg(Bits(width = 1))
-  val nadsc = Reg(Bits(width = 1))
-  val noe = Reg(Bits(width = 1))
-  val nbwe = Reg(Bits(width = 1))
-  val nbw = Reg(Bits(width = 4))
-  val nadv = Reg(Bits(width = 1))
-  val cmdAccept = Bits(width = 1)
-  val dataAccept = Bits(width = 1)
+  val idle :: rd1 :: wr1 :: Nil = Enum(3)
+  val ssramState = RegInit(init = idle)
+  val waitState = Reg(UInt(4.W))
+  val burstCnt = Reg(UInt(log2Up(burstLen).W))
+  val rdDataEna = Reg(UInt(1.W))
+  val rdData = Reg(UInt(32.W))
+  val resp = Reg(UInt(2.W))
+  val ramDout = Reg(UInt(32.W))
+  val address = Reg(UInt((addrBits-2).W))
+  val doutEna = Reg(UInt(1.W))
+  val nadsc = Reg(UInt(1.W))
+  val noe = Reg(UInt(1.W))
+  val nbwe = Reg(UInt(1.W))
+  val nbw = Reg(UInt(4.W))
+  val nadv = Reg(UInt(1.W))
+  val cmdAccept = UInt(1.W)
+  val dataAccept = UInt(1.W)
 
   //init default register values
-  rdDataEna := Bits(0)
-  doutEna := Bits(0)
-  nadsc := Bits(1)
-  noe := Bits(1)
-  nbwe := Bits(1)
-  nbw := Bits("b1111")
-  nadv := Bits(1)
+  rdDataEna := 0.U
+  doutEna := 0.U
+  nadsc := 1.U
+  noe := 1.U
+  nbwe := 1.U
+  nbw := "b1111".U
+  nadv := 1.U
   resp := OcpResp.NULL
   ramDout := io.ocp.M.Data
-  burstCnt := UInt(0)
-  dataAccept := Bits(0)
-  cmdAccept := Bits(1)
+  burstCnt := 0.U
+  dataAccept := 0.U
+  cmdAccept := 1.U
 
   //catch inputs
   when (io.ocp.M.Cmd === OcpCmd.RD || io.ocp.M.Cmd === OcpCmd.WR) {
@@ -104,76 +108,76 @@ class SSRam32Ctrl (
 
   //following helps to output only when output data is valid
   io.ocp.S.Data := rdData
-  when (rdDataEna === Bits(1)) {
+  when (rdDataEna === 1.U) {
     io.ocp.S.Data := io.pins.ramIn.din
     rdData := io.pins.ramIn.din //read data can be used depending how the top-level keeps register of input or not
   }
 
   when (ssramState === rd1) {
-    noe := Bits(0)
-    nadv := Bits(0)
-    cmdAccept := Bits(0)
-    when (waitState <= UInt(1)) {
-      rdDataEna := Bits(1)
-      burstCnt := burstCnt + UInt(1)
+    noe := 0.U
+    nadv := 0.U
+    cmdAccept := 0.U
+    when (waitState <= 1.U) {
+      rdDataEna := 1.U
+      burstCnt := burstCnt + 1.U
       resp := OcpResp.DVA
-      when (burstCnt === UInt(burstLen-1)) {
-        burstCnt := UInt(0)
-        nadv := Bits(1)
-        noe := Bits(1)
-        cmdAccept := Bits(1)
+      when (burstCnt === (burstLen-1).U) {
+        burstCnt := 0.U
+        nadv := 1.U
+        noe := 1.U
+        cmdAccept := 1.U
         ssramState := idle
       }
     }
   }
   when (ssramState === wr1) {
-    cmdAccept := Bits(0)
-    when (waitState <= UInt(1)) {
-      when (burstCnt === UInt(burstLen-1)) {
-        burstCnt := UInt(0)
+    cmdAccept := 0.U
+    when (waitState <= 1.U) {
+      when (burstCnt === (burstLen-1).U) {
+        burstCnt := 0.U
         resp := OcpResp.DVA
-        cmdAccept := Bits(1)
+        cmdAccept := 1.U
         ssramState := idle
       }
-      when (io.ocp.M.DataValid === Bits(1)) {
-        dataAccept := Bits(1)
-        burstCnt := burstCnt + UInt(1)
-        nadsc := Bits(0)
-        nbwe := Bits(0)
+      when (io.ocp.M.DataValid === 1.U) {
+        dataAccept := 1.U
+        burstCnt := burstCnt + 1.U
+        nadsc := 0.U
+        nbwe := 0.U
         nbw := ~(io.ocp.M.DataByteEn)
-        doutEna := Bits(1)
+        doutEna := 1.U
       }
     }
   }
 
   when (io.ocp.M.Cmd === OcpCmd.RD) {
     ssramState := rd1
-    nadsc := Bits(0)
-    noe := Bits(0)
+    nadsc := 0.U
+    noe := 0.U
   }
-  .elsewhen(io.ocp.M.Cmd === OcpCmd.WR && io.ocp.M.DataValid === Bits(1)) {
-    dataAccept := Bits(1)
+  .elsewhen(io.ocp.M.Cmd === OcpCmd.WR && io.ocp.M.DataValid === 1.U) {
+    dataAccept := 1.U
     ssramState := wr1
-    nadsc := Bits(0)
-    nbwe := Bits(0)
+    nadsc := 0.U
+    nbwe := 0.U
     nbw := ~(io.ocp.M.DataByteEn)
-    doutEna := Bits(1)
+    doutEna := 1.U
   }
 
   //counter till output is ready
-  when (waitState =/= UInt(0)) {
-    waitState := waitState - UInt(1)
+  when (waitState =/= 0.U) {
+    waitState := waitState - 1.U
   }
   //set wait state after incoming request
   when (io.ocp.M.Cmd === OcpCmd.RD) {
-    waitState := UInt(ramWsRd + 1)
+    waitState := (ramWsRd + 1).U
   }
   when (io.ocp.M.Cmd === OcpCmd.WR) {
-    waitState := UInt(ramWsWr + 1)
+    waitState := (ramWsWr + 1).U
   }
 
   io.pins.ramOut.dout := io.ocp.M.Data
-  when (doutEna === Bits(1)) {
+  when (doutEna === 1.U) {
     io.pins.ramOut.dout := ramDout
   }
 
@@ -190,11 +194,11 @@ class SSRam32Ctrl (
   io.ocp.S.DataAccept := dataAccept
   io.ocp.S.CmdAccept := cmdAccept
   //output fixed signals
-  io.pins.ramOut.ngw := Bits(1)
-  io.pins.ramOut.nce1 := Bits(0)
-  io.pins.ramOut.ce2 := Bits(1)
-  io.pins.ramOut.nce3 := Bits(0)
-  io.pins.ramOut.nadsp := Bits(1)
+  io.pins.ramOut.ngw := 1.U
+  io.pins.ramOut.nce1 := 0.U
+  io.pins.ramOut.ce2 := 1.U
+  io.pins.ramOut.nce3 := 0.U
+  io.pins.ramOut.nadsp := 1.U
 }
 
 /*
@@ -217,7 +221,7 @@ object SSRam32Main {
     val chiselArgs = args.slice(1, args.length)
     val addrBits = args(0).toInt
 
-    chiselMain(chiselArgs, () => Module(new SSRam32Ctrl(addrBits)))
+    emitVerilog(new SSRam32Ctrl(addrBits), chiselArgs)
   }
 }
 
@@ -229,12 +233,12 @@ object SSRam32Main {
 */
 class ExtSsram(addrBits : Int, fileName : String) extends Module {
   val io = new Bundle() {
-    val ramOut = new RamOutType(addrBits).asInput
-    val ramIn = new RamInType().asOutput
+    val ramOut = Input(new RamOutType(addrBits))
+    val ramIn = Output(new RamInType())
   }
 
   //on chip memory instance
-  val ssram_extmem = Mem(Bits(width = 32), 2 * ICACHE_SIZE) //bus width = 32
+  val ssram_extmem = Mem(2 * ICACHE_SIZE, UInt(32.W)) //bus width = 32
 
   def initSsram(fileName: String): Mem[UInt] = {
     println("Reading " + fileName)
@@ -248,29 +252,29 @@ class ExtSsram(addrBits : Int, fileName : String) extends Module {
         word <<= 8
         word += byteArray(i * 4 + j).toInt & 0xff
       }
-      printf("%08x\n", Bits(word))
+      printf("%08x\n", word.U)
       // mmh, width is needed to keep bit 31
-      ssram_extmem(Bits(i)) := Bits(word, width=32)
+      ssram_extmem(i) := word.U(32.W)
     }
     // generate some dummy data to fill the table and make Bit 31 test happy
     for (x <- byteArray.length / 4 until ICACHE_SIZE * 2)
-      ssram_extmem(Bits(x)) := Bits("h80000000")
+      ssram_extmem(x) := "h80000000".U
     ssram_extmem
   }
 
   //initSsram(fileName)
-  val address = Reg(init = Bits(0, width = 19))
-  val dout = Reg(init = Bits(0, width = 32))
-  val nadv = Reg(init = Bits(0, width = 1))
+  val address = RegInit(init = 0.U(19.W))
+  val dout = RegInit(init = 0.U(32.W))
+  val nadv = RegInit(init = 0.U(1.W))
 
   nadv := io.ramOut.nadv
-  when (io.ramOut.nadsc === Bits(0)) {
+  when (io.ramOut.nadsc === 0.U) {
     address := io.ramOut.addr
   }
-  .elsewhen (nadv === Bits(0)) {
-    address := address + Bits(1)
+  .elsewhen (nadv === 0.U) {
+    address := address + 1.U
   }
-  when (io.ramOut.noe === Bits(0)) {
+  when (io.ramOut.noe === 0.U) {
     dout := ssram_extmem(address)
   }
   io.ramIn.din := dout

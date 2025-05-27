@@ -20,6 +20,7 @@
 \usepackage{ulem}
 \usepackage{enumerate}
 \usepackage{framed}
+\usepackage{tikz}
 
 % avoid clubs and widows
 \clubpenalty=10000
@@ -71,17 +72,17 @@
 \newcommand{\rasmus}[1]{\comment{Rasmus}{#1}{Mahogany}}
 
 % uncomment to get rid of comments
-\renewcommand{\tommy}[1]{}
-\renewcommand{\wolf}[1]{}
-\renewcommand{\martin}[1]{}
-\renewcommand{\stefan}[1]{}
-\renewcommand{\daniel}[1]{}
-\renewcommand{\cullmann}[1]{}
-\renewcommand{\gebhard}[1]{}
-\renewcommand{\fb}[1]{}
-\renewcommand{\jack}[1]{}
-\renewcommand{\sahar}[1]{}
-\renewcommand{\rasmus}[1]{}
+%\renewcommand{\tommy}[1]{}
+%\renewcommand{\wolf}[1]{}
+%\renewcommand{\martin}[1]{}
+%\renewcommand{\stefan}[1]{}
+%\renewcommand{\daniel}[1]{}
+%\renewcommand{\cullmann}[1]{}
+%\renewcommand{\gebhard}[1]{}
+%\renewcommand{\fb}[1]{}
+%\renewcommand{\jack}[1]{}
+%\renewcommand{\sahar}[1]{}
+%\renewcommand{\rasmus}[1]{}
 
 %
 % custom colors
@@ -142,9 +143,9 @@
 
 \title{Patmos Reference Handbook}
 
-\author{Martin Schoeberl, Florian Brandner, Stefan Hepp,\\Wolfgang Puffitsch, Daniel Prokesch}
+\author{Martin Schoeberl, Florian Brandner, Stefan Hepp,\\Wolfgang Puffitsch, Daniel Prokesch, Emad Jacob Maroun}
 
-\lowertitleback{Copyright \copyright{} 2014 Technical University of Denmark
+\lowertitleback{Copyright \copyright{} 2024 Technical University of Denmark
   \medskip\\
   \begin{tabular}{lp{.8\textwidth}}
     \raisebox{-12pt}{\includegraphics[height=18pt]{fig/cc_by_sa}} &
@@ -232,6 +233,12 @@ patmos-clang hello.c
 pasim a.out
 \end{verbatim}
 
+Or with the Patmos hardware emulator as follows:
+
+\begin{verbatim}
+patemu a.out
+\end{verbatim}
+
 However, this innocent example is quite challenging for an embedded system. We will be needing:
 \begin{itemize}
 	\item A C compiler.
@@ -248,7 +255,7 @@ with programs loaded via a serial port.
 
 
 \section{Building Patmos}
-
+\label{sec:building_patmos}
 The whole build process of Patmos,%
 \footnote{Get the source from GitHub with: \code{git clone git@github.com:t-crest/patmos}}
 applications in assembler
@@ -272,8 +279,7 @@ On a Linux box with the installed LLVM compiler and Quartus in your PATH,
 the complete build processes for a Hello World is as follows:
 
 \begin{verbatim}
-make BOOTAPP=bootable-bootloader APP=hello_puts \
-   tools comp gen synth config download
+make APP=hello_puts tools comp gen synth config download
 \end{verbatim}
 
 However, this involves quite many steps. Therefore, we suggest doing some \emph{manual}
@@ -358,72 +364,6 @@ wloop:	subi	r1 = r1, 1
 	br	loop
 \end{lstlisting}
 
-\subsection{A C Based Blinking LED}
-
-As a first real example we build the embedded version of Hello World, the
-blinking LED, from a C program. You can find the C source in \code{c/blinking.c}.
-
-\begin{verbatim}
-make BOOTAPP=bootable-blinking comp gen synth config
-\end{verbatim}
-
-Additionally to blinking an LED this program also writes alternating `0' and `1'
-to the serial port. Connect the FPGA board to your serial port,
-open a terminal of your choice (e.g., \code{gtkterm}), connect to the serial port,
-set the baud rate to 115200, no parity, and no handshaking.
-You should see alternating `0' and `1' sent out synchronous to the blinking.
-
-Note that the program name (\code{blink}) is prefixed by \code{bootable-}.
-The marker selects the right compiler settings for a program that ends up in
-the Patmos on-chip ROM. As the on-chip memory is limited, only tiny programs
-are supported in this execution mode.
-
-Figure~\ref{fig:blink} shows the code for the embedded Hello World
-C program. Two constants (0xF0090000 and 0xF0080004) are the addresses
-of the IO devices LED and serial port. IO devices connected to Patmos are
-connected to the local, uncached memory area. This is the same memory
-area where data SPM and NoC SPM are connected. Therefore, to access them
-one needs to use the local load/store instructions. With the attribute \code{\_SPM}
-the compiler is instructed to emit the correct load and store instructions.
-
-\begin{lstlisting}[float,caption={A blinking LED\label{fig:blink}}]
-/*
-    This is a minimal C program executed on the FPGA version of Patmos.
-    An embedded Hello World program: a blinking LED.
-
-    Additional to the blinking LED we write to the UART '0' and '1' (if available).
-
-    Author: Martin Schoeberl
-    Copyright: DTU, BSD License
-*/
-
-#include "include/bootable.h"
-#include <machine/spm.h>
-
-int main() {
-
-    volatile _SPM int *led_ptr  = (volatile _SPM int *) 0xF0090000;
-    volatile _SPM int *uart_ptr = (volatile _SPM int *) 0xF0080004;
-    int i, j;
-
-    for (;;) {
-        *uart_ptr = '1';
-        for (i=2000; i!=0; --i)
-            for (j=2000; j!=0; --j)
-                *led_ptr = 1;
-
-
-        *uart_ptr = '0';
-        for (i=2000; i!=0; --i)
-            for (j=2000; j!=0; --j)
-                *led_ptr = 0;
-
-    }
-}
-\end{lstlisting}
-
-\martin{TODO: we need to streamline the make process a little bit.
-The targets might be a little bit confusing. Patmos is compiled two times.}
 
 
 \subsection{Make Targets}
@@ -457,8 +397,7 @@ the complete build processes for the Hello World is as follows:
 
 % make BOOTAPP=bootable-bootloader APP=hello_puts tools synth comp config download
 \begin{verbatim}
-make BOOTAPP=bootable-bootloader APP=hello_puts \
-   tools comp gen synth config download
+make APP=hello_puts tools comp gen synth config download
 \end{verbatim}
 
 
@@ -566,20 +505,88 @@ make app config download APP=hello
 A more interesting multicore example, which also uses \code{libcorethread} code
 without building a library, can be found in \code{c/apps/bench}.
 
+\subsection{A C Based Blinking LED as Bootable}
+\label{sec:c_blinking_led}
+
+As a first real example we build the embedded version of Hello World, the
+blinking LED, from a C program. You can find the C source in \code{c/blinking.c}.
+
+\begin{verbatim}
+make BOOTAPP=bootable-blinking comp gen synth config
+\end{verbatim}
+
+Additionally to blinking an LED this program also writes alternating `0' and `1'
+to the serial port. Connect the FPGA board to your serial port,
+open a terminal of your choice (e.g., \code{gtkterm}), connect to the serial port,
+set the baud rate to 115200, no parity, and no handshaking.
+You should see alternating `0' and `1' sent out synchronous to the blinking.
+
+Note that the program name (\code{blink}) is prefixed by \code{bootable-}.
+The marker selects the right compiler settings for a program that ends up in
+the Patmos on-chip ROM. As the on-chip memory is limited, only tiny programs
+are supported in this execution mode.
+
+Figure~\ref{fig:blink} shows the code for the embedded Hello World
+C program. Two constants (0xF0090000 and 0xF0080004) are the addresses
+of the IO devices LED and serial port. IO devices connected to Patmos are
+connected to the local, uncached memory area. This is the same memory
+area where data SPM and NoC SPM are connected. Therefore, to access them
+one needs to use the local load/store instructions. With the attribute \code{\_SPM}
+the compiler is instructed to emit the correct load and store instructions.
+
+\begin{lstlisting}[float,caption={A blinking LED\label{fig:blink}}]
+/*
+    This is a minimal C program executed on the FPGA version of Patmos.
+    An embedded Hello World program: a blinking LED.
+
+    Additional to the blinking LED we write to the UART '0' and '1' (if available).
+
+    Author: Martin Schoeberl
+    Copyright: DTU, BSD License
+*/
+
+#include "include/bootable.h"
+#include <machine/spm.h>
+
+int main() {
+
+    volatile _SPM int *led_ptr  = (volatile _SPM int *) 0xF0090000;
+    volatile _SPM int *uart_ptr = (volatile _SPM int *) 0xF0080004;
+    int i, j;
+
+    for (;;) {
+        *uart_ptr = '1';
+        for (i=2000; i!=0; --i)
+            for (j=2000; j!=0; --j)
+                *led_ptr = 1;
+
+
+        *uart_ptr = '0';
+        for (i=2000; i!=0; --i)
+            for (j=2000; j!=0; --j)
+                *led_ptr = 0;
+
+    }
+}
+\end{lstlisting}
+
+\martin{TODO: we need to streamline the make process a little bit.
+The targets might be a little bit confusing. Patmos is compiled two times.}
+
+
 \subsection{Supported FPGA Boards}
 
-At the time of this writing we have mainly focused on Altera FPGA based boards. Following boards
-are directly supported in the build process:
+Several FPGA boards from AMD/Xilinx and Intel/Altera are supported. The default board is:
 
 \begin{itemize}
-\item Altera DE2-115 (\code{altde2-115}), this is the default board for the project
-\item Altera DE2-70 (\code{altde2-70})
-\item Altera/Farnell BeMicro (\code{bemicro})
+\item Altera DE2-115 (\code{altde2-115})
 \end{itemize}
 
 Setting the \code{BOARD} variable configures the board that shall be used.
 Without changing the \code{Makefile} the default of the board (and any other build variables)
 can be overridden by providing a local \code{config.mk} that is included in the \code{Makefile}.
+Board configurations can be found in \code{hardware/config}.
+
 
 \subsection{Multicore Patmos}
 
@@ -621,6 +628,41 @@ the \code{patmos} directory.
 Figure~\ref{fig:cmp:hello} shows the embedded \emph{Hello World} example
 executing code on two cores and each core blinking its own LED (each core
 is connected to one of the LEDs).
+
+\textbf{FIXME: describe this and have it as example code}
+
+\begin{lstlisting}[float,caption={Multiple cores are represented as pthreads \label{fig:cmp:pthread}}]
+
+#include <stdio.h>
+#include <pthread.h>
+
+// Function to be executed by the thread
+void* thread_function(void* arg) {
+    printf("Hello from the thread!\n");
+    return NULL;
+}
+
+int main() {
+    pthread_t thread;
+
+    // Create a new thread that will run 'thread_function'
+    if (pthread_create(&thread, NULL, thread_function, NULL)) {
+        fprintf(stderr, "Error creating thread\n");
+        return 1;
+    }
+
+    // Wait for the thread to finish
+    if (pthread_join(thread, NULL)) {
+        fprintf(stderr, "Error joining thread\n");
+        return 2;
+    }
+
+    printf("Hello from the main thread!\n");
+    return 0;
+}
+\end{lstlisting}
+
+
 \textbf{FIXME: In the current version this does NOT work anymore as all LEDs are now
 connected to a single core and not distributed to the cores.}
 
@@ -769,32 +811,6 @@ the mutex, the cores are guaranteed to see the most up-to-date value, as success
 locking a mutex invalidates a core's data cache. The pattern for sharing data using the
 mutexes is therefore: lock the mutex, read/write the data, unlock the mutex.
 
-\subsubsection{On-chip Application}
-
-For small experiments it is possible to execute a multicore program out
-of the on-chip memories. The Mandelbrot demo is one example.
-
-In directory \code{aegean} run:
-
-\begin{verbatim}
-make platform AEGEAN_PLATFORM=mandelbrot_demo
-make synth config AEGEAN_PLATFORM=mandelbrot_demo
-\end{verbatim}
-
-to generate (and synthesize) the mandelbrot application on a 4 core
-version of Patmos for an Altera DE2-115 FPGA board. This application is compiled
-into the on-chip memories and therefore executing right after configuration of the
-FPGA. Have a terminal open and connected to the serial port (115200 baud, 1 stop bit,
-no handshake) during and after the FPGA configuration and you shall see the output of
-the mandelbrot calculation.
-
-However, the approach to have the application in on-chip memory works for tiny programs
-only. Furthermore, each software change needs a new synthesize run. A better approach is
-to build a platform that contains a bootloader (similar to the single core version) and some
-startup code to synchronize the program start with the other cores.
-
-Note that the usage of Aegean to generate and compile multicore versions of
-Patmos is deprecated.
 
 %[2014-02-28 17:24:08 ] Stefan Hepp: #include <machine/patmos.h>
 %[2014-02-28 17:24:22 ] Stefan Hepp: zu finden in patmos-newlib/newlib/libc/machine/patmos/machine/patmos.h
@@ -2854,6 +2870,39 @@ discussion and evaluation with benchmarks. A minimal approach, as first
 step for the hardware implementation, is to have only ALU instructions
 available in the second pipelines (excluding predicate manipulation instructions).
 
+It is undefined behavior for the two instructions in a bundle to be enabled at runtime and write to the same target register of any kind (with the exception on the read-only registers like \texttt{r0} and \texttt{p0}).
+\autoref{tab:doublewrites} gives some examples of defined and undefined instruction combinations.
+Notice that the target register does not have to be explicit, as in the example with \texttt{mts} writing to the same register as a \texttt{mul}.
+
+% Draws a checkmark. Source: https://tex.stackexchange.com/a/655719/192254
+\newcommand{\tikzxmark}{%
+	\tikz[scale=0.23] {
+		\draw[line width=0.7,line cap=round] (0,0) to [bend left=6] (1,1);
+		\draw[line width=0.7,line cap=round] (0.2,0.95) to [bend right=3] (0.8,0.05);
+}}
+
+% Draws a crossmark. Source: https://tex.stackexchange.com/a/655719/192254
+\newcommand{\tikzcmark}{%
+	\tikz[scale=0.23] {
+		\draw[line width=0.7,line cap=round] (0.25,0) to [bend left=10] (1,1);
+		\draw[line width=0.8,line cap=round] (0,0.35) to [bend right=1] (0.23,0);
+}}
+
+\begin{table}[hb]
+	\centering
+	\begin{tabular}{l l  | c}
+		Instruction 1 & Instruction 2 & Defined \\
+		\hline
+		\texttt{(\tikzcmark) add r0 = ..} & \texttt{(\tikzcmark) add r0 = ..} & \tikzcmark \\
+		\texttt{(\tikzcmark) add r1 = ..} & \texttt{(\tikzcmark) add r1 = ..} & \tikzxmark \\
+		\texttt{(\tikzcmark) add r1 = ..} & \texttt{(\tikzxmark) add r1 = ..} & \tikzcmark \\
+		\texttt{(\tikzcmark) mul ..} & \texttt{(\tikzcmark) mul ..} & \tikzxmark \\
+		\texttt{(\tikzcmark) mul ..} & \texttt{(\tikzcmark) mts sl = ..} & \tikzxmark \\
+	\end{tabular}
+	\caption{Examples of (un)defined writes to the same register. Checkmarks in the predicate position represent whether the predicate and its negation evaluate to true when the bundle is executed.}
+	\label{tab:doublewrites}
+\end{table}
+
 \stefan{From what I see in the code, it might also help a lot to allow SWS in the
 second pipeline, as they are quite common. Predicate instructions are not that common
 now but this will change with the new single-path passes.
@@ -3077,9 +3126,9 @@ Address & I/O Device & read & write \\
 \code{0xf0000000} & CpuInfo & & \\
 \dots             & CpuInfo & \multicolumn{2}{c}{CpuInfo device information registers (see Section \ref{sec:cpuinfo})} \\
 \code{0xf0007fff} & CpuInfo & & \\
-\code{0xf0008000} & CpuInfo & Boot Data ROM & -- \\
+\code{0xf0008000} & CpuInfo & Boot Data & -- \\
 \dots             & CpuInfo & \dots    & -- \\
-\code{0xf0008fff} & CpuInfo & Boot Data ROM & -- \\
+\code{0xf0008fff} & CpuInfo & Boot Data & -- \\
 \cmidrule{1-4}
 \code{0xf0010000} & ExcUnit & &  \\
 \dots             & ExcUnit & \multicolumn{2}{c}{Exception unit and cache control (see Section~\ref{sec:exc})} \\
@@ -4335,32 +4384,21 @@ JDK 8.
 The following we describe how to setup an Ubuntu installation with the needed tools. 
 This should work for the latest Ubuntu distribution. 
 
-First, because Patmos uses Chisel as its hardware language,
-which is built on top of Scala, we need to ensure we can install SBT. 
-Therefore, we start by enabling the distribution to download sbt:
-
-\begin{verbatim}
-echo "deb https://dl.bintray.com/sbt/debian /" | sudo tee -a \
-  /etc/apt/sources.list.d/sbt.list
-sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 \
-  --recv 2EE0EA64E40A89B84B2DF73499E82A75642AC823
-sudo apt-get update
-sudo apt-get install sbt
-\end{verbatim}
-
 We can now install all the needed tools:
 
 \begin{verbatim}
 sudo apt install git openjdk-8-jdk gitk cmake make g++ texinfo flex bison \
   subversion libelf-dev graphviz libboost-dev libboost-program-options-dev ruby-full \
-  liblpsolve55-dev python zlib1g-dev gtkwave gtkterm scala autoconf libfl2 expect verilator
+  liblpsolve55-dev zlib1g-dev gtkwave gtkterm scala autoconf libfl2 expect verilator curl
 \end{verbatim}
 
-Make sure to use Java 8 and remove any later Java version with
+Make sure to use Java 8 or a later version.
 
-\begin{verbatim}
-sudo apt autoremove
-\end{verbatim}
+As Patmos uses Chisel as its hardware language,
+which is built on top of Scala, we need install \code{sbt}
+according to the instructions from \url{https://www.scala-sbt.org/download.html}
+or \url{https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html}
+
 
 For the Quartus setup it is best to change the default shell to \code{/bin/bash}:
 
@@ -4387,7 +4425,7 @@ First install the Mac compiler (Xcode) and the command line tools.
 For the build of Patmos and the compiler we need to install:
 
 \begin{verbatim}
-brew install cmake boost libelf sbt doxygen expect
+brew install cmake boost libelf sbt doxygen expect svn texinfo
 \end{verbatim}
 
 For WCET analysis install
@@ -4402,10 +4440,7 @@ For wave viewing install GTKWave with
 brew install homebrew/x11/gtkwave
 \end{verbatim}
 
-Several tools are needed, best installed with \code{brew}. For Patmos simulator and assembler:
-\code{boost}, \code{libelf}.
-
-\subsection{Windows 10}
+\subsection{Windows 10/11}
 
 The Patmos tool chain doesn't build nor run directly on Windows.
 However, through the use of the Windows Subsystem for Linux (WSL), 
@@ -4434,16 +4469,68 @@ Generally, interaction with Patmos should be done through the Ubuntu terminal as
 the machine was actually running Ubuntu.
 The only exception is any tool that uses a graphical UI, which requires some additional setup to support.
 
+\subsubsection{Using USB devices}
+
+WSL does not have access to USB devides by default.
+This makes it impossible to configure FPGAs.
+To get access to USB devices, you first need to install \texttt{usbipd-win} following this guide: 
+
+\href{https://learn.microsoft.com/en-us/windows/wsl/connect-usb}{https://learn.microsoft.com/en-us/windows/wsl/connect-usb}\\
+
+To use a USB device from WSL, you first need to find its Bus-ID in Windows Powershell:
+
+\begin{verbatim}
+	usbipd list
+\end{verbatim}
+
+For example, the DE2-115 configuration cable could show:
+
+\begin{verbatim}
+	BUSID  VID:PID    DEVICE               STATE
+	4-1    09fb:6001  USB-Blaster          Not shared
+\end{verbatim}
+
+In an administrator-mode Powershell, force bind the device to WSL and then attach it (replace X-X with the desired bus id, which in this case is 4-1):
+
+\begin{verbatim}
+	usbipd bind --force -b X-X
+	usbipd attach -w -b X-X
+\end{verbatim}
+
+WSL now has exclusive access to the device. 
+The device binding should persist even if the device is unplugged and plugged back in.
+However, it does not persist if the machine is turned off (or if WSL is shut down manually.)
+The device attachment does not persist at all. 
+If you want to be able to unplug the cable or turn off the FPGA, use the \texttt{-a} flag.
+
+You can see the attached USB device in WSL using the \texttt{lsusb} command.
+You will likely need to setup the FPGA devices as described in \autoref{sec:build:setup:quartus}.
+
+The same procedure can be used to attach usb-to-serial convertor USB device to the WSL. 
+Also, to automate these command, you can use this batch code, and run it as administrator (edit IDs for your machine): 
+
+\begin{verbatim}
+  @echo off
+  setlocal
+  set USB_DEVICE_1="1a86:7523"
+  set USB_DEVICE_2="09fb:6001"
+  usbipd list
+  usbipd bind --force --hardware-id %USB_DEVICE_1%
+  usbipd bind --force --hardware-id %USB_DEVICE_2%
+  usbipd attach --wsl --hardware-id %USB_DEVICE_1%
+  usbipd attach --wsl --hardware-id %USB_DEVICE_2%
+  endlocal
+\end{verbatim}
+
 \section{Building Patmos and the Compiler Tool Chain}
 \label{sec:build:compiler}
 
 We assume that the T-CREST project will live in \code{\$HOME/t-crest}.
-Before building Patmos, add the Patmos tool chain binaries to your path (e.g., in your \code{.bashrc} or
-\code{.profile}):\footnote{The path needs to be absolute. LLVM cannot handle
-a path relative to the home folder \textasciitilde{}, e.g., \code{\textasciitilde{}/t-crest/local/bin}.}
+Before building the compiler and Patmos, add the  tool chain binaries to
+your path (e.g., in your \code{.bashrc} or \code{.profile}):
 
 \begin{verbatim}
-$ echo "export PATH=\$PATH:\$HOME/t-crest/local/bin" >> ~/.profile
+export PATH=$PATH:$HOME/t-crest/local/bin
 \end{verbatim}
 
 A complete logout from Ubuntu might be needed to take effect (just closing
@@ -4473,6 +4560,13 @@ This script (\code{build.sh}) will checkout several other repositories (the comp
 and the Patmos source) and
 builds the compiler and the Patmos simulator.
 Therefore, take a cup of coffee and find some nice reading.
+
+If you want to save some time, you can install the prebuilt compiler with:
+
+\begin{verbatim}
+$ ./misc/build.sh -q
+\end{verbatim}
+
 
 Hint: The build script isn't optimized for multiple cores.
 Some parts of the Patmos tool chain -- Like the compiler -- are very well suited for running on multiple cores.
@@ -4531,15 +4625,17 @@ $ make
 \end{verbatim}
 
 \section{Quartus on Linux}
+\label{sec:build:setup:quartus}
 
-Download the free web edition of Quartus from Intel.\footnote{When you use the
-default FPGA board DE2-115 you need to install Quartus 16.1 as later versions
-drop the support of the Cyclone~IV.}
-The Linux version is
-installed as follows:\footnote{\url{http://www.altera.com/literature/manual/quartus_install.pdf}}
-
+Download the free Prime Lite edition of Quartus from Intel official website using the link below.\footnote {For a complete tutorial about installing Quartus follow this link: \url{https://cdrdv2-public.intel.com/666293/quartus_install-683472-666293.pdf}} All currently-available versions of Quartus Prime Lite (17 to 22) support Cyclone IV with which DE2-115 is equipped. However, for DE2-70 boards containing Cyclone II you need to install Quartus web which only versions 13 and 13.1 are available to download currently and needs 32-bit compatibility libraries on 64-bit Linux distributions to be installed.\footnote {For more information about compatibility issues follow this link: \url {https://www.intel.com/content/www/us/en/support/programmable/support-resources/design-software/devices-support.html}}
+\\*
+\\*
+\url{https://www.intel.com/content/www/us/en/collections/products/fpga/software/downloads.html}
+\\
+\\
+Then decompress downloaded file using following command:
 \begin{verbatim}
-tar xvf Quartus-web-xxx.tar
+tar xvf Quartus-lite-xxx-linux.tar
 \end{verbatim}
 
 The software installation is started with:
@@ -4549,7 +4645,7 @@ bash setup.sh
 \end{verbatim}
 
 Then add the \code{bin} directory of Quartus to your \$PATH.
-%
+
 For access to the serial port the user needs access rights.
 
 \begin{verbatim}
@@ -4595,6 +4691,7 @@ RUN+="/bin/chmod 0666 %c"
 
 Reload the rules:
 \begin{verbatim}
+sudo service udev restart
 sudo udevadm control --reload
 \end{verbatim}
 
@@ -4610,7 +4707,7 @@ and hope for an output similar to:
   020F70DD   EP3C120/EP4CE115
 \end{verbatim}
 
-In some cases, killing the the jtagd process can make the connection work againg:
+In some cases, killing the the \code{jtagd} process can make the connection work again:
 
 \begin{verbatim}
 $ sudo killall -9 jtagd
@@ -4640,13 +4737,6 @@ After fixing the permissions for the USB Blaster open Quartus and test if the
 cable is found with the programmer. Select USB-Blaster in \emph{Hardware Setup}.
 When connected to an FPGA test the USB-Blaster with \emph{Auto Detect}
 (With the DE2-115, a question about shared JTAG ID pops up -- select EP4CE115).
-
-For the DE2-115 board that contains the Cyclone~IV.
-The latest Quartus version that supports the Cyclone~IV is 16.1.
-Quartus~13.1 drops the support of Cyclone~II devices. Therefore, the
-(phased out) Altera DE2-70 board is not supported anymore. Version 13.0 supports Cyclone~II\
-till Cyclone~V devices and might be the best option at the moment if you want to
-support both DE2 boards.
 
 
 

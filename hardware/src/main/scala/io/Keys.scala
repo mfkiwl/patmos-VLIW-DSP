@@ -7,7 +7,7 @@
 
 package io
 
-import Chisel._
+import chisel3._
 
 import ocp._
 
@@ -26,17 +26,19 @@ object Keys extends DeviceObject {
 class Keys(keyCount : Int) extends CoreDevice() {
 
   override val io = IO(new CoreDeviceIO() with patmos.HasPins with patmos.HasInterrupts {
-    override val pins = new Bundle() {
-      val key = Bits(INPUT, keyCount)
+    val pins: Bundle {
+      val key: UInt
+    } = new Bundle() {
+      val key = Input(UInt(keyCount.W))
     }
-    override val interrupts = Vec(keyCount, Bool(OUTPUT) )
+    override val interrupts = Vec(keyCount, Output(Bool()) )
   })
 
-  val keySyncReg = Reg(Bits(width = keyCount))
-  val keyReg = Reg(Bits(width = keyCount))
+  val keySyncReg = Reg(UInt(keyCount.W))
+  val keyReg = Reg(UInt(keyCount.W))
 
   // Default response
-  val respReg = Reg(init = OcpResp.NULL)
+  val respReg = RegInit(init = OcpResp.NULL)
   respReg := OcpResp.NULL
 
   // Read current state of keys
@@ -54,6 +56,6 @@ class Keys(keyCount : Int) extends CoreDevice() {
 
   // Generate interrupts on falling edges
   for (i <- 0 until keyCount) {
-    io.interrupts(i) := keyReg(i) === Bits("b1") && keySyncReg(i) === Bits("b0")
+    io.interrupts(i) := keyReg(i) === "b1".U && keySyncReg(i) === "b0".U
   }
 }

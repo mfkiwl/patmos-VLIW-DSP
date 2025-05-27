@@ -8,7 +8,8 @@
 
 package io
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
 
@@ -38,82 +39,87 @@ object SPIMaster extends DeviceObject {
 class SPIMaster(clkFreq : Int, slaveCount : Int, sclkHz : Int, fifoDepth : Int, wordLen : Int) extends CoreDevice() {
     
     override val io = new CoreDeviceIO() with patmos.HasPins {
-        override val pins = new Bundle() {
-            val sclk = Bits(OUTPUT, 1)
-            val mosi = Bits(OUTPUT, 1) 
-            val miso = Bits(INPUT, 1)
-            val nSS = Bits(OUTPUT, slaveCount)
+        val pins: Bundle {
+          val sclk: UInt
+          val mosi: UInt
+          val miso: UInt
+          val nSS: UInt
+        } = new Bundle() {
+            val sclk = Output(UInt(1.W))
+            val mosi = Output(UInt(1.W))
+            val miso = Input(UInt(1.W))
+            val nSS = Output(UInt(slaveCount.W))
             }
         }
 
     //Sclk generation
     var sclkCounterN = log2Up(CLOCK_FREQ/sclkHz)
 
-    val sclkCounterReg = Reg(init = UInt(0, 32))
-    val tick = sclkCounterReg === UInt(sclkCounterN-1)
+    val sclkCounterReg = RegInit(init = 0.U(32.W))
+    val tick = sclkCounterReg === (sclkCounterN-1).U
 
-    sclkCounterReg := sclkCounterReg + UInt(1)
+    sclkCounterReg := sclkCounterReg + 1.U
     when (tick) {
-      sclkCounterReg := UInt(0)
+      sclkCounterReg := 0.U
     }
 
     // send sm
-    val idle :: send :: waitOne :: Nil  = Enum(UInt(), 3)
-    val state = Reg(init = idle)
+    val idle :: send :: waitOne :: Nil  = Enum(3)
+    val state = RegInit(init = idle)
 
     // Tx duration count
-    val wordCounterReg = Reg(init = UInt(0,32))
-    val wordDone = wordCounterReg === UInt(wordLen)
+    val wordCounterReg = RegInit(init = 0.U(32.W))
+    val wordDone = wordCounterReg === wordLen.U
 
     // IO Signal registers
-    val sclkReg = Reg(init = Bool(false))
+    val sclkReg = RegInit(init = false.B)
 
-    //val prevSclkReg = Reg(init = UInt(0, 1))
+    //val prevSclkReg = Reg(init = 0.U(1.W))
 
 
     val sclkEdge = sclkReg && !RegNext(sclkReg)
     val sclkFall = !sclkReg && RegNext(sclkReg)
 
-    val mosiReg = Reg(init = UInt(0, 1))
+    val mosiReg = RegInit(init = 0.U(1.W))
     
 
-    val misoReg = Reg(init = UInt(0, 1))
-    val nSSReg = Reg(init = UInt(0, 1))
+    val misoReg = RegInit(init = 0.U(1.W))
+    val nSSReg = RegInit(init = 0.U(1.W))
 
 
     //Serial-in parallel out register for miso
-    //val misoRxReg = Reg(init = UInt(0, wordLen))
-    val misoRxReg = Reg(Vec(wordLen, UInt(0,1)))
+    //val misoRxReg = Reg(init = 0.U(wordLen.W))
+    val misoRxReg = Reg(Vec(wordLen, 0.U(1.W)))
 
     // Queue of received messages 
-    val rxQueue = Module(new Queue(Bits(width = wordLen), fifoDepth))
+    val rxQueue = Module(new Queue(UInt(wordLen.W), fifoDepth))
     rxQueue.io.enq.bits     := misoRxReg.asUInt
-    rxQueue.io.enq.valid    := Bool(false)
-    rxQueue.io.deq.ready    := Bool(false)
+    rxQueue.io.enq.valid    := false.B
+    rxQueue.io.deq.ready    := false.B
 
     // Queue of messages to be sent
-    val txQueue = Module(new Queue(Bits(width = wordLen), fifoDepth))
+    val txQueue = Module(new Queue(UInt(wordLen.W), fifoDepth))
     txQueue.io.enq.bits     := io.ocp.M.Data(wordLen-1, 0)
-    txQueue.io.enq.valid    := Bool(false)
-    txQueue.io.deq.ready    := Bool(false)
+    txQueue.io.enq.valid    := false.B
+    txQueue.io.deq.ready    := false.B
 
     //Serial-out register for mosi
-    val loadToSend = Reg(init = Bool(false))
-    loadToSend := Bool(false) //Default value
-    val mosiTxReg = Reg(init = UInt(0,wordLen))
+    val loadToSend = RegInit(init = false.B)
+    loadToSend := false.B //Default value
+    val mosiTxReg = RegInit(init = 0.U(wordLen.W))
     when (loadToSend) {
-      txQueue.io.deq.ready := Bool(true)
+      txQueue.io.deq.ready := true.B
       mosiTxReg := txQueue.io.deq.bits
     } otherwise {
       //mosiTxReg := txQueue.io.deq.bits
     }
 
     // Default response
-    val respReg = Reg(init = OcpResp.NULL)
+    val respReg = RegInit(init = OcpResp.NULL)
     respReg := OcpResp.NULL
 
     //Read response data register
-    val rdDataReg = Reg(init = Bits(0, width = wordLen))
+    val rdDataReg = RegInit(init = 0.U(wordLen.W))
   
     // Connections to master
     io.ocp.S.Resp := respReg
@@ -122,9 +128,9 @@ class SPIMaster(clkFreq : Int, slaveCount : Int, sclkHz : Int, fifoDepth : Int, 
 
     //Read any stored data in miso queue. 
     when(io.ocp.M.Cmd === OcpCmd.RD) {
-      when(rxQueue.io.count > UInt(0))
+      when(rxQueue.io.count > 0.U)
       {
-        rxQueue.io.deq.ready := Bool(true)
+        rxQueue.io.deq.ready := true.B
         rdDataReg := rxQueue.io.deq.bits
         respReg := OcpResp.DVA
       }
@@ -135,19 +141,19 @@ class SPIMaster(clkFreq : Int, slaveCount : Int, sclkHz : Int, fifoDepth : Int, 
       // loadToSend := true.B
       respReg := OcpResp.DVA
       txQueue.io.enq.bits := io.ocp.M.Data(wordLen-1, 0)
-      txQueue.io.enq.valid := Bool(true)    
+      txQueue.io.enq.valid := true.B
     }
 
 
 
     when (state === idle)
     {
-      nSSReg := Bits(1)
-      wordCounterReg := Bits(0)
-      mosiReg := Bits(0)
-      sclkReg := Bool(false)
+      nSSReg := 1.U
+      wordCounterReg := 0.U
+      mosiReg := 0.U
+      sclkReg := false.B
       //When TX queue has data send
-      when (txQueue.io.count > UInt(0) )
+      when (txQueue.io.count > 0.U )
       {
         loadToSend := true.B
         state := send 
@@ -171,11 +177,11 @@ class SPIMaster(clkFreq : Int, slaveCount : Int, sclkHz : Int, fifoDepth : Int, 
       }
 
       when(sclkFall){
-        wordCounterReg := wordCounterReg + UInt(1)
+        wordCounterReg := wordCounterReg + 1.U
       }
 
       // Pull slave select low TODO:multiple slaves?
-      nSSReg := Bits(0)
+      nSSReg := 0.U
 
       
       // When a word length is sent close the transmission 
@@ -183,7 +189,7 @@ class SPIMaster(clkFreq : Int, slaveCount : Int, sclkHz : Int, fifoDepth : Int, 
       when(wordDone)
       {
         rxQueue.io.enq.bits     := misoRxReg.asUInt
-        rxQueue.io.enq.valid    := Bool(true)
+        rxQueue.io.enq.valid    := true.B
         state := idle
       }
     }

@@ -9,16 +9,16 @@
 
 package cop
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos._
 import patmos.Constants._
-import util._
 import ocp._
 
 abstract class CoprocessorObject() {
   // every device object must have methods "create" and "init"
-  def init(params: Map[String, String])
+  def init(params: Map[String, String]): Unit
   def create(params: Map[String, String]) : Coprocessor
 }
 
@@ -27,16 +27,16 @@ abstract class Coprocessor() extends Module() {
 }
 
 abstract class BaseCoprocessor() extends Coprocessor(){
-    override val io = IO(new Bundle() {
-      val copIn = new PatmosToCoprocessor().asInput
-      val copOut = new CoprocessorToPatmos().asOutput  
+    val io = IO(new Bundle() {
+      val copIn = Input(new PatmosToCoprocessor())
+      val copOut = Output(new CoprocessorToPatmos())
     })
 }
 
 abstract class CoprocessorMemoryAccess() extends Coprocessor(){
-    override val io = IO(new Bundle() {
-        val copIn = new PatmosToCoprocessor().asInput
-        val copOut = new CoprocessorToPatmos().asOutput
+    val io = IO(new Bundle() {
+        val copIn = Input(new PatmosToCoprocessor())
+        val copOut = Output(new CoprocessorToPatmos())
         val memPort = new OcpBurstMasterPort(EXTMEM_ADDR_WIDTH, DATA_WIDTH, BURST_LENGTH)  
     })
 }

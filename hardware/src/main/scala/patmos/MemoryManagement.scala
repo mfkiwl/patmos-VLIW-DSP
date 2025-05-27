@@ -7,7 +7,8 @@
 
 package patmos
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import Constants._
 
@@ -24,29 +25,28 @@ object MemoryManagement {
   val PERM_X = 0
 
   class Segment extends Bundle {
-    val perm   = UInt(width = PERM_BITS)
-    val length = UInt(width = ADDR_WIDTH-ALIGN_BITS-PERM_BITS)
-    val base   = UInt(width = ADDR_WIDTH-ALIGN_BITS)
+    val perm   = UInt(PERM_BITS.W)
+    val length = UInt((ADDR_WIDTH-ALIGN_BITS-PERM_BITS).W)
+    val base   = UInt((ADDR_WIDTH-ALIGN_BITS).W)
   }
 }
 
 import MemoryManagement._
 
-class MemoryManagement extends Module {
-  val io = IO(new MMUIO())
+class MemoryManagement extends MemoryManagementType {
 
   val masterReg = RegNext(io.ctrl.M)
 
-  def checked(action: => Unit) {
+  def checked(action: => Unit): Unit = {
     when (io.superMode) (action) .otherwise { io.ctrl.S.Resp := OcpResp.ERR }
   }
 
-  val segInfoVec = Mem(UInt(width = ADDR_WIDTH-ALIGN_BITS), SEG_COUNT)
-  val segBaseVec = Mem(UInt(width = ADDR_WIDTH-ALIGN_BITS), SEG_COUNT)
+  val segInfoVec = Mem(SEG_COUNT, UInt((ADDR_WIDTH-ALIGN_BITS).W))
+  val segBaseVec = Mem(SEG_COUNT, UInt((ADDR_WIDTH-ALIGN_BITS).W))
 
   // Default OCP response
   io.ctrl.S.Resp := OcpResp.NULL
-  io.ctrl.S.Data := UInt(0, width = DATA_WIDTH)
+  io.ctrl.S.Data := 0.U(DATA_WIDTH.W)
 
   // Handle OCP reads and writes for control interface
   when(masterReg.Cmd === OcpCmd.RD) {
@@ -55,7 +55,7 @@ class MemoryManagement extends Module {
   when(masterReg.Cmd === OcpCmd.WR) {
     io.ctrl.S.Resp := OcpResp.DVA
     checked {
-      when (masterReg.Addr(2) === UInt(0)) {
+      when (masterReg.Addr(2) === 0.U) {
         segBaseVec(masterReg.Addr(SEG_BITS+2, 3)) := masterReg.Data(DATA_WIDTH-1, ALIGN_BITS)
       } .otherwise {
         segInfoVec(masterReg.Addr(SEG_BITS+2, 3)) := masterReg.Data(DATA_WIDTH-1, ALIGN_BITS)
@@ -76,7 +76,7 @@ class MemoryManagement extends Module {
 
   val translated = new OcpBurstMasterSignals(ADDR_WIDTH, DATA_WIDTH)
   translated := virtReg
-  translated.Addr := Cat(segment.base, UInt(0, width = ALIGN_BITS)) + virtReg.Addr(ADDR_WIDTH-SEG_BITS-1, 0)
+  translated.Addr := Cat(segment.base, 0.U(ALIGN_BITS.W)) + virtReg.Addr(ADDR_WIDTH-SEG_BITS-1, 0)
 
   // Connect return path
   io.virt.S := io.phys.S
@@ -85,7 +85,7 @@ class MemoryManagement extends Module {
   val buffer = Module(new Queue(new OcpBurstMasterSignals(EXTMEM_ADDR_WIDTH, DATA_WIDTH), BURST_LENGTH))
 
   buffer.io.enq.bits := translated
-  buffer.io.enq.valid := !reset
+  buffer.io.enq.valid := !reset.asBool
   io.virt.S.CmdAccept := buffer.io.enq.ready
   io.virt.S.DataAccept := buffer.io.enq.ready
 
@@ -93,20 +93,20 @@ class MemoryManagement extends Module {
   buffer.io.deq.ready := io.phys.S.CmdAccept | io.phys.S.DataAccept
 
   // Check permissions
-  val permViol = ((virtReg.Cmd === OcpCmd.RD && !execReg && segment.perm(PERM_R) === UInt(0)) ||
-                  (virtReg.Cmd === OcpCmd.RD && execReg && segment.perm(PERM_X) === UInt(0)) ||
-                  (virtReg.Cmd === OcpCmd.WR && segment.perm(PERM_W) === UInt(0)))
-  val permViolReg = Reg(next = permViol)
+  val permViol = ((virtReg.Cmd === OcpCmd.RD && !execReg && segment.perm(PERM_R) === 0.U) ||
+                  (virtReg.Cmd === OcpCmd.RD && execReg && segment.perm(PERM_X) === 0.U) ||
+                  (virtReg.Cmd === OcpCmd.WR && segment.perm(PERM_W) === 0.U))
+  val permViolReg = RegNext(next = permViol)
   //debug(permViolReg) does nothing in chisel3 (no proning in frontend of chisel3 anyway)
 
-  val lengthViol = (segment.length =/= UInt(0) &&
+  val lengthViol = (segment.length =/= 0.U &&
                     virtReg.Addr(ADDR_WIDTH-SEG_BITS-1, ALIGN_BITS) >= segment.length)
-  val lengthViolReg = Reg(next = lengthViol)
+  val lengthViolReg = RegNext(next = lengthViol)
   //debug(lengthViolReg)   does nothing in chisel3 (no proning in frontend of chisel3 anyway)
 
   // State machine for handling violations
-  val idle :: respRd :: waitWr :: respWr :: Nil = Enum(UInt(), 4)
-  val stateReg = Reg(init = idle)
+  val idle :: respRd :: waitWr :: respWr :: Nil = Enum(4)
+  val stateReg = RegInit(init = idle)
   val burstReg = Reg(UInt())
 
   // Trigger violation handling
@@ -115,11 +115,11 @@ class MemoryManagement extends Module {
     when (stateReg === idle) {
       when (virtReg.Cmd === OcpCmd.RD) {
         stateReg := respRd
-        burstReg := UInt(io.virt.burstLength-1)
+        burstReg := (io.virt.burstLength-1).U
       }
       when (virtReg.Cmd === OcpCmd.WR) {
         stateReg := waitWr
-        burstReg := UInt(io.virt.burstLength-2)
+        burstReg := (io.virt.burstLength-2).U
       }
     }
   }
@@ -127,14 +127,14 @@ class MemoryManagement extends Module {
   // Respond to CPU to signal violation
   when (stateReg === respRd) {
     io.virt.S.Resp := OcpResp.ERR
-    burstReg := burstReg - UInt(1)
-    when (burstReg === UInt(0)) {
+    burstReg := burstReg - 1.U
+    when (burstReg === 0.U) {
       stateReg := idle
     }
   }
   when (stateReg === waitWr) {
-    burstReg := burstReg - UInt(1)
-    when (burstReg === UInt(0)) {
+    burstReg := burstReg - 1.U
+    when (burstReg === 0.U) {
       stateReg := respWr
     }
   }

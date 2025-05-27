@@ -9,10 +9,10 @@
 
 package cop
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
-import util._
 import ocp._
 
 object Fibonacci extends CoprocessorObject {
@@ -28,17 +28,17 @@ class Fibonacci() extends BaseCoprocessor() {
 
     //some coprocessor registers
     val idle :: fibonacciRunning :: Nil = Enum(2)
-    val opStateReg = Reg(init = idle)
+    val opStateReg = RegInit(init = idle)
     val readIdle :: fibonacciReadRequest :: Nil = Enum(2) 
-    val readStateReg = Reg(init = readIdle)
-    val currentValueReg = Reg(UInt(width = 32))
-    val lastValueReg = Reg(UInt(width = 32))
-    val nextValue = Wire(UInt(width = 32))
-    val iterationsReg = Reg(UInt(width = 32))
-    val currentIterationReg = Reg(UInt(width = 32))
+    val readStateReg = RegInit(init = readIdle)
+    val currentValueReg = Reg(UInt(32.W))
+    val lastValueReg = Reg(UInt(32.W))
+    val nextValue = Wire(UInt(32.W))
+    val iterationsReg = Reg(UInt(32.W))
+    val currentIterationReg = Reg(UInt(32.W))
 
-    io.copOut.result := UInt(0)
-    io.copOut.ena_out := Bool(false)
+    io.copOut.result := 0.U
+    io.copOut.ena_out := false.B
 
     // start operation 
     when(io.copIn.trigger & io.copIn.ena_in) {
@@ -48,7 +48,7 @@ class Fibonacci() extends BaseCoprocessor() {
                 // fibonacci calculation
                 when(io.copIn.funcId === FUNC_FIBONACCI) {
                     io.copOut.result    := currentValueReg
-                    io.copOut.ena_out   := Bool(true)
+                    io.copOut.ena_out   := true.B
                 }
             }
             .otherwise
@@ -64,17 +64,17 @@ class Fibonacci() extends BaseCoprocessor() {
             when(opStateReg === idle) {
                 // fibonacci calculation
                 when(io.copIn.funcId === FUNC_FIBONACCI) {
-                    currentValueReg       := UInt(1)
-                    lastValueReg          := UInt(1)
+                    currentValueReg       := 1.U
+                    lastValueReg          := 1.U
                     opStateReg            := fibonacciRunning
-                    currentIterationReg   := UInt(1)
+                    currentIterationReg   := 1.U
                     iterationsReg          := io.copIn.opData(0)
-                    io.copOut.ena_out   := Bool(true)
+                    io.copOut.ena_out   := true.B
                 }
             }
             .otherwise
             {
-                io.copOut.ena_out   := Bool(true)
+                io.copOut.ena_out   := true.B
             }
             
         }
@@ -91,14 +91,14 @@ class Fibonacci() extends BaseCoprocessor() {
             nextValue          := lastValueReg + currentValueReg
             lastValueReg          := currentValueReg
             currentValueReg       := nextValue
-            currentIterationReg   := currentIterationReg + UInt(1)
+            currentIterationReg   := currentIterationReg + 1.U
         }
     }
 
     when (readStateReg === fibonacciReadRequest & opStateReg === idle)
     {
         io.copOut.result    := currentValueReg
-        io.copOut.ena_out   := Bool(true)
+        io.copOut.ena_out   := true.B
         readStateReg          := readIdle
     }
 

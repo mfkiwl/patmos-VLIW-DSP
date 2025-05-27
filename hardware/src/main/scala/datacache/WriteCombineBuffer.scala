@@ -38,23 +38,18 @@
 
 package datacache
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos.Constants._
 import patmos.WriteCombinePerf
 
 import ocp._
 
-class WriteCombineBuffer() extends Module {
-  val io = IO(new Bundle {
-    val readMaster = new OcpBurstSlavePort(ADDR_WIDTH, DATA_WIDTH, BURST_LENGTH)
-    val writeMaster = new OcpCacheSlavePort(ADDR_WIDTH, DATA_WIDTH)
-    val slave = new OcpBurstMasterPort(ADDR_WIDTH, DATA_WIDTH, BURST_LENGTH)
-    val perf = new WriteCombinePerf()
-  })
+class WriteCombineBuffer() extends WriteBufferType {
 
-  io.perf.hit := Bool(false)
-  io.perf.miss := Bool(false)
+  io.perf.hit := false.B
+  io.perf.miss := false.B
 
   val addrWidth = io.writeMaster.M.Addr.getWidth
   val dataWidth = io.writeMaster.M.Data.getWidth
@@ -65,26 +60,26 @@ class WriteCombineBuffer() extends Module {
   val tagWidth = addrWidth - burstAddrBits - byteAddrBits
 
   // State of transmission
-  val idle :: read :: write :: writeResp :: writeComb :: writeSnoop :: Nil = Enum(Bits(), 6)
-  val state = Reg(init = idle)
-  val cntReg = Reg(init = UInt(0, burstAddrBits))
+  val idle :: read :: write :: writeResp :: writeComb :: writeSnoop :: Nil = Enum(6)
+  val state = RegInit(init = idle)
+  val cntReg = RegInit(init = 0.U(burstAddrBits.W))
 
   // Register signals that come from write master
-  val writeMasterReg = Reg(io.writeMaster.M)
+  val writeMasterReg = Reg(chiselTypeOf(io.writeMaster.M))
 
   // Register signals that come from read master
-  val readMasterReg = Reg(next = io.readMaster.M)
+  val readMasterReg = RegNext(next = io.readMaster.M)
 
   // Registers for write combining
-  val tagReg = Reg(init = Bits(0, width = tagWidth))
-  val dataBuffer = Reg(Vec(burstLength, Bits(width = dataWidth)))
-  val byteEnBuffer = RegInit(Vec.fill(burstLength) { Bits(0, width = byteEnWidth) })
+  val tagReg = RegInit(init = 0.U(tagWidth.W))
+  val dataBuffer = Reg(Vec(burstLength, UInt(dataWidth.W)))
+  val byteEnBuffer = RegInit(VecInit(Seq.fill(burstLength)(0.U(byteEnWidth.W))))
   val hitReg = Reg(Bool())
 
   // Temporary vector for combining
-  val comb = Vec.fill(byteEnWidth) { Bits(width = 8) }
+  val comb = Wire(Vec(byteEnWidth, UInt(8.W)))
   for (i <- 0 until byteEnWidth) {
-    comb(i) := Bits(0)
+    comb(i) := 0.U
   }
 
   // Default responses
@@ -100,17 +95,17 @@ class WriteCombineBuffer() extends Module {
     io.readMaster.S.Resp := io.slave.S.Resp
     when(hitReg) {
       for (i <- 0 until byteEnWidth) {
-        comb(i) := Mux(byteEnBuffer(cntReg)(i) === Bits(1),
+        comb(i) := Mux(byteEnBuffer(cntReg)(i) === 1.U,
                        dataBuffer(cntReg)(8*i+7, 8*i),
                        io.slave.S.Data(8*i+7, 8*i))
       }
       io.readMaster.S.Data := comb.reduceLeft((x,y) => y##x)
     }
     when(io.slave.S.Resp =/= OcpResp.NULL) {
-      when(cntReg === UInt(burstLength - 1)) {
+      when(cntReg === (burstLength - 1).U) {
         state := idle
       }
-      cntReg := cntReg + UInt(1)
+      cntReg := cntReg + 1.U
     }
   }
 
@@ -119,24 +114,24 @@ class WriteCombineBuffer() extends Module {
   // Write burst
   when(state === write) {
     io.readMaster.S.Resp := OcpResp.NULL
-    when(cntReg === Bits(0)) {
+    when(cntReg === 0.U) {
       io.slave.M.Cmd := OcpCmd.WR
-      io.slave.M.Addr := Cat(tagReg, Fill(burstAddrBits+byteAddrBits, Bits(0)))
+      io.slave.M.Addr := Cat(tagReg, Fill(burstAddrBits+byteAddrBits, 0.U))
     }
-    io.slave.M.DataValid := Bits(1)
+    io.slave.M.DataValid := 1.U
     io.slave.M.Data := dataBuffer(cntReg)
     io.slave.M.DataByteEn := byteEnBuffer(cntReg)
 
-    when(io.slave.S.DataAccept === Bits(1)) {
+    when(io.slave.S.DataAccept === 1.U) {
       tagReg := writeMasterReg.Addr(addrWidth-1, burstAddrBits+byteAddrBits)
-      byteEnBuffer(cntReg) := Bits(0)
+      byteEnBuffer(cntReg) := 0.U
       when(cntReg === wrPos) {
         dataBuffer(cntReg) := writeMasterReg.Data
         byteEnBuffer(cntReg) := writeMasterReg.ByteEn
       }
-      cntReg := cntReg + UInt(1)
+      cntReg := cntReg + 1.U
     }
-    when(cntReg === UInt(burstLength - 1)) {
+    when(cntReg === (burstLength - 1).U) {
       state := writeResp
     }
   }
@@ -152,7 +147,7 @@ class WriteCombineBuffer() extends Module {
   when(state === writeComb) {
     io.writeMaster.S.Resp := OcpResp.DVA
     for (i <- 0 until byteEnWidth) {
-      comb(i) := Mux(writeMasterReg.ByteEn(i) === Bits(1),
+      comb(i) := Mux(writeMasterReg.ByteEn(i) === 1.U,
                      writeMasterReg.Data(8*i+7, 8*i),
                      dataBuffer(wrPos)(8*i+7, 8*i))
     }
@@ -162,21 +157,21 @@ class WriteCombineBuffer() extends Module {
   }
 
   // Snoop writes from readMaster
-  val dataAcceptReg = Reg(next = io.slave.S.DataAccept)
+  val dataAcceptReg = RegNext(next = io.slave.S.DataAccept)
   when(state === writeSnoop) {
-    when(dataAcceptReg === Bits(1)) {
+    when(dataAcceptReg === 1.U) {
       when (hitReg) {
         for (i <- 0 until byteEnWidth) {
-          comb(i) := Mux(readMasterReg.DataByteEn(i) === Bits(1),
+          comb(i) := Mux(readMasterReg.DataByteEn(i) === 1.U,
                          readMasterReg.Data(8*i+7, 8*i),
                          dataBuffer(cntReg)(8*i+7, 8*i))
         }
         dataBuffer(cntReg) := comb.reduceLeft((x,y) => y##x)
         byteEnBuffer(cntReg) := byteEnBuffer(cntReg) | readMasterReg.DataByteEn
       }
-      cntReg := cntReg + UInt(1)
+      cntReg := cntReg + 1.U
     }
-    when(cntReg === UInt(burstLength - 1)) {
+    when(cntReg === (burstLength - 1).U) {
       state := idle
     }
   }
@@ -192,10 +187,10 @@ class WriteCombineBuffer() extends Module {
     writeMasterReg := io.writeMaster.M
     when (tagReg === io.writeMaster.M.Addr(addrWidth-1, burstAddrBits+byteAddrBits)) {
       state := writeComb
-      io.perf.hit := Bool(true)
+      io.perf.hit := true.B
     } .otherwise {
       state := write
-      io.perf.miss := Bool(true)
+      io.perf.miss := true.B
     }
   }
   // Snoop writes from readMaster

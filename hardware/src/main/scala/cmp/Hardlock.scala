@@ -9,15 +9,16 @@
  */
 package cmp
  
-import Chisel._
+import chisel3._
+import chisel3.util._
 import patmos.Constants._
 import ocp._
 
 class HardlockIO(val lckCnt : Int) extends Bundle {
-  val sel = UInt(INPUT, log2Up(lckCnt))
-  val op = Bool(INPUT)
-  val en = Bool(INPUT)
-  val blck = Bool(OUTPUT)
+  val sel = Input(UInt(log2Up(lckCnt).W))
+  val op = Input(Bool())
+  val en = Input(Bool())
+  val blck = Output(Bool())
 }
 
 class HardlockIOVec(val coreCnt : Int, val lckCnt : Int) extends Bundle {
@@ -29,25 +30,25 @@ abstract class AbstractHardlock(coreCnt : Int,lckCnt : Int) extends Module {
   val CoreCount = coreCnt
   val LockCount = lckCnt
   
-  override val io = IO(new HardlockIOVec(coreCnt, lckCnt)) // Vec.fill(coreCnt){new HardlockIO(lckCnt)}
+  val io = IO(new HardlockIOVec(coreCnt, lckCnt))
   
   
-  val queueReg = RegInit(Vec.fill(lckCnt){Vec.fill(coreCnt){false.B}})
+  val queueReg = RegInit(VecInit(Seq.fill(lckCnt)(VecInit(Seq.fill(coreCnt)(false.B)))))
   for (i <- 0 until lckCnt) {
     for (j <- 0 until coreCnt) {
-      when(io.cores(j).sel === UInt(i) && io.cores(j).en === Bool(true)) {
+      when(io.cores(j).sel === i.U && io.cores(j).en === true.B) {
         queueReg(i)(j) := io.cores(j).op
       }
     }
   }
   
-  val curReg = RegInit(Vec.fill(lckCnt){UInt(0, log2Up(coreCnt))})
+  val curReg = RegInit(VecInit(Seq.fill(lckCnt)(0.U(log2Up(coreCnt).W))))
   
   val blocks = Wire(Vec(coreCnt, Vec(lckCnt, Bool())))
   
   for (i <- 0 until coreCnt) {
     for (j <- 0 until lckCnt) {
-      blocks(i)(j) := queueReg(j)(i) && (curReg(j) =/= UInt(i))
+      blocks(i)(j) := queueReg(j)(i) && (curReg(j) =/= i.U)
     }
     io.cores(i).blck := blocks(i).asUInt.orR
   }
@@ -60,8 +61,8 @@ class Hardlock(coreCnt : Int,lckCnt : Int) extends AbstractHardlock(coreCnt, lck
   
   for (i <- 0 until lckCnt) {
     for (j <- 0 until coreCnt) {
-      lo(i)(j) := queueReg(i)(j) && (curReg(i) > UInt(j))
-      hi(i)(j) := queueReg(i)(j) && (curReg(i) <= UInt(j))  
+      lo(i)(j) := queueReg(i)(j) && (curReg(i) > j.U)
+      hi(i)(j) := queueReg(i)(j) && (curReg(i) <= j.U)
     }
     
     when(hi(i).asUInt.orR) {
@@ -73,15 +74,15 @@ class Hardlock(coreCnt : Int,lckCnt : Int) extends AbstractHardlock(coreCnt, lck
   }
 }
 
-class HardlockOCPWrapper(hardlockgen: () => AbstractHardlock) extends Module {
+class HardlockOCPWrapper(nrCores: Int, hardlockgen: () => AbstractHardlock) extends CmpDevice(nrCores) {
+  val io = IO(new CmpIO(nrCores))
+
   
   val hardlock = Module(hardlockgen())
-  
-  override val io = IO(new CmpIO(hardlock.CoreCount)) //Vec.fill(hardlock.CoreCount){new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)}
-  
+
   // Mapping between internal io and OCP here
   
-  val reqReg = Reg(init = Bits(0,hardlock.CoreCount))
+  val reqReg = RegInit(init = 0.U(hardlock.CoreCount.W))
   val reqBools = Wire(Vec(hardlock.CoreCount, Bool()))
 
   reqBools := reqReg.asBools
@@ -89,25 +90,25 @@ class HardlockOCPWrapper(hardlockgen: () => AbstractHardlock) extends Module {
   for (i <- 0 until hardlock.CoreCount) {
     hardlock.io.cores(i).op := io.cores(i).M.Data(0);
     hardlock.io.cores(i).sel := io.cores(i).M.Data >> 1;
-    hardlock.io.cores(i).en := Bool(false)
+    hardlock.io.cores(i).en := false.B
     when(io.cores(i).M.Cmd === OcpCmd.WR) {
-      hardlock.io.cores(i).en := Bool(true)
+      hardlock.io.cores(i).en := true.B
     }
 
     when(io.cores(i).M.Cmd =/= OcpCmd.IDLE) {
-      reqBools(i) := Bool(true)
-      reqReg := reqBools.asUInt()
+      reqBools(i) := true.B
+      reqReg := reqBools.asUInt
     }
-    .elsewhen(reqReg(i) === Bool(true) && hardlock.io.cores(i).blck === Bool(false)) {
-      reqBools(i) := Bool(false)
-      reqReg := reqBools.asUInt()
+    .elsewhen(reqReg(i) === true.B && hardlock.io.cores(i).blck === false.B) {
+      reqBools(i) := false.B
+      reqReg := reqBools.asUInt
     }
     
     io.cores(i).S.Resp := OcpResp.NULL
-    when(reqReg(i) === Bool(true) && hardlock.io.cores(i).blck === Bool(false)) {
+    when(reqReg(i) === true.B && hardlock.io.cores(i).blck === false.B) {
       io.cores(i).S.Resp := OcpResp.DVA
     }
       
-    io.cores(i).S.Data := UInt(0)
+    io.cores(i).S.Data := 0.U
   }
 }

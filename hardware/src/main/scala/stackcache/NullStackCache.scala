@@ -40,7 +40,8 @@
 
 package stackcache
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos._
 import patmos.Constants._
@@ -49,26 +50,18 @@ import datacache.WriteNoBuffer
 
 import ocp._
 
-class NullStackCache() extends Module {
-  val io = new StackCacheIO() {
-    // slave to cpu
-    val fromCPU = new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH)
-    // master to memory
-    val toMemory = new OcpBurstMasterPort(ADDR_WIDTH, DATA_WIDTH, BURST_LENGTH)
+class NullStackCache() extends StackCacheType {
 
-    val perf = new StackCachePerf()
-  }
-
-  io.perf.spill := Bool(false)
-  io.perf.fill := Bool(false)
+  io.perf.spill := false.B
+  io.perf.fill := false.B
 
   // stack top pointer
-  val stackTopReg = Reg(UInt(width = DATA_WIDTH))
+  val stackTopReg = Reg(UInt(DATA_WIDTH.W))
   // memory top pointer
-  val memTopReg = Reg(UInt(width = DATA_WIDTH))
+  val memTopReg = Reg(UInt(DATA_WIDTH.W))
 
   // never stall
-  io.stall := Bool(false)
+  io.stall := false.B
 
   // signals to execute stage
   io.scex.stackTop := stackTopReg
@@ -81,10 +74,12 @@ class NullStackCache() extends Module {
 
   // translate write requests
   val wc = Module(new WriteNoBuffer())
-  wc.io.readMaster <> nc.io.slave
+  wc.io.readMaster.M := nc.io.slave.M
+  nc.io.slave.S := wc.io.readMaster.S
   wc.io.writeMaster.M := io.fromCPU.M
   wc.io.writeMaster.M.Addr := io.fromCPU.M.Addr + stackTopReg
-  wc.io.slave <> io.toMemory
+  io.toMemory.M := wc.io.slave.M
+  wc.io.slave.S := io.toMemory.S
 
   // construct response
   io.fromCPU.S.Data := nc.io.master.S.Data

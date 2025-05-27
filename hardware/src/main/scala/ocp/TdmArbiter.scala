@@ -8,41 +8,26 @@
 
 package ocp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
-class TdmArbiter(cnt: Int, addrWidth : Int, dataWidth : Int, burstLen : Int) extends Module {
-  // MS: I'm always confused from which direction the name shall be
-  // probably the other way round...
-  val io = IO(new Bundle {
-    val master = Vec.fill(cnt) { new OcpBurstSlavePort(addrWidth, dataWidth, burstLen) }
-    val slave = new OcpBurstMasterPort(addrWidth, dataWidth, burstLen)
-  })
-  //debug(io.master) does nothing in chisel3 (no proning in frontend of chisel3 anyway)
-  //debug(io.slave)
+class TdmArbiter(cnt: Int, addrWidth : Int, dataWidth : Int, burstLen : Int) extends ArbiterType(cnt, dataWidth, dataWidth, burstLen) {
 
-  val cntReg = Reg(init = UInt(0, log2Up(cnt*(burstLen + 2))))
+  val cntReg = RegInit(init = 0.U(log2Up(cnt*(burstLen + 2)).W))
   // slot length = burst size + 2 
-  val burstCntReg = Reg(init = UInt(0, log2Up(burstLen)))
+  val burstCntReg = RegInit(init = 0.U(log2Up(burstLen).W))
   val period = cnt * (burstLen + 2)
   val slotLen = burstLen + 2
-  val cpuSlot = RegInit(Vec.fill(cnt){UInt(0, width=1)})
+  val cpuSlot = RegInit(VecInit(Seq.fill(cnt)((0.U(1.W)))))
 
-  val sIdle :: sRead :: sWrite :: Nil = Enum(UInt(), 3)
-  val stateReg = RegInit(Vec.fill(cnt){sIdle})
+  val sIdle :: sRead :: sWrite :: Nil = Enum(3)
+  val stateReg = RegInit(VecInit(Seq.fill(cnt)(sIdle)))
 
-  /*debug(cntReg) does nothing in chisel3 (no proning in frontend of chisel3 anyway)
-  debug(cpuSlot(0))
-  debug(cpuSlot(1))
-  debug(cpuSlot(2))
-  debug(stateReg(0))
-  debug(stateReg(1))
-  debug(stateReg(2))*/
-
-  cntReg := Mux(cntReg === UInt(period - 1), UInt(0), cntReg + UInt(1))
+  cntReg := Mux(cntReg === (period - 1).U, 0.U, cntReg + 1.U)
 
   // Generater the slot Table for the whole period
   def slotTable(i: Int): UInt = {
-    (cntReg === UInt(i*slotLen)).asUInt
+    (cntReg === (i*slotLen).U).asUInt
   }
 
   for(i <- 0 until cnt) {
@@ -50,27 +35,27 @@ class TdmArbiter(cnt: Int, addrWidth : Int, dataWidth : Int, burstLen : Int) ext
   }
 
   // Initialize data to zero when cpuSlot is not enabled
-  io.slave.M.Addr       := UInt(0)
-  io.slave.M.Cmd        := UInt(0)
-  io.slave.M.DataByteEn := UInt(0)
-  io.slave.M.DataValid  := UInt(0)
-  io.slave.M.Data       := UInt(0)
+  io.slave.M.Addr       := 0.U
+  io.slave.M.Cmd        := 0.U
+  io.slave.M.DataByteEn := 0.U
+  io.slave.M.DataValid  := 0.U
+  io.slave.M.Data       := 0.U
   
   // Initialize slave data to zero
   for (i <- 0 to cnt - 1) {
-    io.master(i).S.CmdAccept := UInt(0)
-    io.master(i).S.DataAccept := UInt(0)
+    io.master(i).S.CmdAccept := 0.U
+    io.master(i).S.DataAccept := 0.U
     io.master(i).S.Resp := OcpResp.NULL
-    io.master(i).S.Data := UInt(0) 
+    io.master(i).S.Data := 0.U
   }
     
   // Temporarily assigned to master 0
-  //val masterIdReg = Reg(init = UInt(0, log2Up(cnt)))
+  //val masterIdReg = Reg(init = 0.U(log2Up(cnt).W))
 
     for (i <- 0 to cnt-1) {
 
       when (stateReg(i) === sIdle) {
-        when (cpuSlot(i) === UInt(1)) {
+        when (cpuSlot(i) === 1.U) {
           
           when (io.master(i).M.Cmd =/= OcpCmd.IDLE){
             when (io.master(i).M.Cmd === OcpCmd.RD) {
@@ -82,7 +67,7 @@ class TdmArbiter(cnt: Int, addrWidth : Int, dataWidth : Int, burstLen : Int) ext
               io.slave.M := io.master(i).M
               io.master(i).S := io.slave.S
               stateReg(i) := sWrite
-              burstCntReg := UInt(0)
+              burstCntReg := 0.U
             }
           }
         }
@@ -101,30 +86,13 @@ class TdmArbiter(cnt: Int, addrWidth : Int, dataWidth : Int, burstLen : Int) ext
          io.slave.M := io.master(i).M
          io.master(i).S := io.slave.S
          when (io.slave.S.Resp === OcpResp.DVA) {
-           burstCntReg := burstCntReg + UInt(1)
-             when (burstCntReg === UInt(burstLen) - UInt(1)) {
+           burstCntReg := burstCntReg + 1.U
+             when (burstCntReg === burstLen.U - 1.U) {
                stateReg := sIdle
              }
            }
         }
-    } 
-
-  //io.slave.M := io.master(masterIdReg).M
-  //debug(io.slave.M) does nothing in chisel3 (no proning in frontend of chisel3 anyway)
-
-}
-
-object TdmArbiterMain {
-  def main(args: Array[String]): Unit = {
-
-    val chiselArgs = args.slice(4, args.length)
-    val cnt = args(0)
-    val addrWidth = args(1)
-    val dataWidth = args(2)
-    val burstLen = args(3)
-
-    chiselMain(chiselArgs, () => Module(new TdmArbiter(cnt.toInt,addrWidth.toInt,dataWidth.toInt,burstLen.toInt)))
-  }
+    }
 }
 
 

@@ -7,7 +7,7 @@
 
 package io
 
-import Chisel._
+import chisel3._
 import ocp._
 
 object WishboneBridge extends DeviceObject {
@@ -27,33 +27,43 @@ object WishboneBridge extends DeviceObject {
 class WishboneBridge(extAddrWidth : Int = 32,
                      dataWidth : Int = 32) extends CoreDevice() {
   override val io = new CoreDeviceIO() with patmos.HasPins {
-    override val pins = new Bundle() {
-      val wb_addr_o = UInt(OUTPUT,extAddrWidth)
-      val wb_data_i = UInt(INPUT,dataWidth)
-      val wb_err_i = Bool(INPUT)
-      val wb_data_o = UInt(OUTPUT,dataWidth)
-      val wb_we_o = Bool(OUTPUT)
-      val wb_sel_o = UInt(OUTPUT,4)
-      val wb_stb_o = Bool(OUTPUT)
-      val wb_ack_i = Bool(INPUT)
-      val wb_cyc_o = Bool(OUTPUT)
+    val pins: Bundle {
+      val wb_addr_o: UInt
+      val wb_data_i: UInt
+      val wb_err_i: Bool
+      val wb_data_o: UInt
+      val wb_we_o: Bool
+      val wb_sel_o: UInt
+      val wb_stb_o: Bool
+      val wb_ack_i: Bool
+      val wb_cyc_o: Bool
+    } = new Bundle() {
+      val wb_addr_o = Output(UInt(extAddrWidth.W))
+      val wb_data_i = Input(UInt(dataWidth.W))
+      val wb_err_i = Input(Bool())
+      val wb_data_o = Output(UInt(dataWidth.W))
+      val wb_we_o = Output(Bool())
+      val wb_sel_o = Output(UInt(4.W))
+      val wb_stb_o = Output(Bool())
+      val wb_ack_i = Input(Bool())
+      val wb_cyc_o = Output(Bool())
     }
   }
   // Registers
-  val we_o_Reg = Reg(init = Bits(0,width=1))
-  val stb_o_Reg = Reg(init = Bits(0,width=1))
-  val cyc_o_Reg = Reg(init = Bits(0,width=1))
-  val addr_o_Reg = Reg(init = Bits(0,width=extAddrWidth))
-  val data_o_Reg = Reg(init = Bits(0,width=dataWidth))
+  val we_o_Reg = RegInit(init = 0.U(1.W))
+  val stb_o_Reg = RegInit(init = 0.U(1.W))
+  val cyc_o_Reg = RegInit(init = 0.U(1.W))
+  val addr_o_Reg = RegInit(init = 0.U(extAddrWidth.W))
+  val data_o_Reg = RegInit(init = 0.U(dataWidth.W))
   
-  val ocp_S_data_Reg = Reg(init = Bits(0,width=dataWidth))
-  val ocp_S_resp_Reg = Reg(init = OcpResp.NULL)
+  val ocp_S_data_Reg = RegInit(init = 0.U(dataWidth.W))
+  val ocp_S_resp_Reg = RegInit(init = OcpResp.NULL)
 
   // Default values and assigments of outputs
   ocp_S_resp_Reg := OcpResp.NULL
   io.ocp.S.Resp := ocp_S_resp_Reg
   io.ocp.S.Data := ocp_S_data_Reg
-  io.pins.wb_sel_o := Bits("b1111")
+  io.pins.wb_sel_o := "b1111".U
   io.pins.wb_we_o := we_o_Reg 
   io.pins.wb_stb_o := stb_o_Reg
   io.pins.wb_cyc_o := cyc_o_Reg
@@ -62,26 +72,26 @@ class WishboneBridge(extAddrWidth : Int = 32,
 
   // Read command
   when(io.ocp.M.Cmd === OcpCmd.RD) {
-  we_o_Reg := Bool(false)
-  stb_o_Reg := Bool(true)
-  cyc_o_Reg := Bool(true)
+  we_o_Reg := false.B
+  stb_o_Reg := true.B
+  cyc_o_Reg := true.B
   addr_o_Reg := io.ocp.M.Addr(extAddrWidth-1, 0)
   }
 
   // Write command
   when(io.ocp.M.Cmd === OcpCmd.WR) {
-  we_o_Reg := Bool(true)
-  stb_o_Reg := Bool(true)
-  cyc_o_Reg := Bool(true)
+  we_o_Reg := true.B
+  stb_o_Reg := true.B
+  cyc_o_Reg := true.B
   addr_o_Reg := io.ocp.M.Addr(extAddrWidth-1, 0)
   data_o_Reg := io.ocp.M.Data
   }
 
   // Transaltion of the WB's ack into OCP's DVA
-  when(io.pins.wb_ack_i === Bits(1)) {
-  we_o_Reg := Bool(false)
-  stb_o_Reg := Bool(false)
-  cyc_o_Reg := Bool(false)
+  when(io.pins.wb_ack_i === 1.U) {
+  we_o_Reg := false.B
+  stb_o_Reg := false.B
+  cyc_o_Reg := false.B
   ocp_S_resp_Reg := OcpResp.DVA
   ocp_S_data_Reg := io.pins.wb_data_i
   }

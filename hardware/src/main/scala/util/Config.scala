@@ -34,14 +34,11 @@ package util
 
 import java.io._
 
-import Chisel._
 import patmos._
 import io.CoreDevice
 import io.Device
 import cop.Coprocessor
 
-import scala.tools.nsc.interpreter.IMain
-import scala.tools.nsc.Settings
 import java.io.DataInputStream
 import java.io.File
 
@@ -281,8 +278,9 @@ object Config {
 
 
       // Emit defines for emulator
-      new java.io.File("build/").mkdirs // build dir is created
-      val file_config = new File("build/emulator_config.h") 
+      val buildDir = scala.util.Properties.envOrElse("HWBUILDDIR", "build" ) + "/"
+      new java.io.File(buildDir).mkdirs // build dir is created
+      val file_config = new File(buildDir + "emulator_config.h") 
       val emuConfig = new PrintWriter(file_config)
       emuConfig.write("#define CORE_COUNT "+coreCount+"\n")
       emuConfig.write("#define ICACHE_"+ICache.typ.toUpperCase+"\n")

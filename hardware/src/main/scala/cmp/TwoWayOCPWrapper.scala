@@ -7,7 +7,8 @@
  */
 package cmp
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import patmos._
 import patmos.Constants._
@@ -16,16 +17,19 @@ import io.CoreDeviceIO
 import twoway._
 
 class XXXIO(lckCnt: Int) extends Bundle {
-  val sel = UInt(INPUT, log2Up(lckCnt))
-  val op = Bool(INPUT)
-  val en = Bool(INPUT)
-  val blck = Bool(OUTPUT)
+  val sel = Input(UInt(log2Up(lckCnt).W))
+  val op = Input(Bool())
+  val en = Input(Bool())
+  val blck = Output(Bool())
 }
 
 // Maybe I should also use this functional approach, but not for a quick test now
 // class TwoWayOCPWrapper(hardlockgen: () => AbstractHardlock) extends Module {
 
-class TwoWayOCPWrapper(nrCores: Int, memSizePrNI : Int) extends Module {
+// TODO: is this dead code? If so, just delete it.
+class TwoWayOCPWrapper(nrCores: Int, memSizePrNI : Int) extends CmpDevice(nrCores) {
+
+  val io = IO(new CmpIO(nrCores))
 
   val dim = math.sqrt(nrCores).toInt
   if (dim * dim != nrCores) throw new Error("Number of cores must be quadratic")
@@ -35,8 +39,6 @@ class TwoWayOCPWrapper(nrCores: Int, memSizePrNI : Int) extends Module {
   val twowaymem = Module(new twoway.TwoWayMem(dim, size))
 
   println("TwoWayMem")
-
-  val io = IO(new CmpIO(nrCores))  //Vec.fill(nrCores) { new OcpCoreSlavePort(ADDR_WIDTH, DATA_WIDTH) }
 
   // Mapping between TwoWay memories and OCP
 

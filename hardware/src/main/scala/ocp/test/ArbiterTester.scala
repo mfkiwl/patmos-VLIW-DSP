@@ -8,7 +8,8 @@
 
 package ocp.test
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import ocp._
 import io.SSRam32Ctrl
 
@@ -19,71 +20,71 @@ class Master(nr: Int, burstLength: Int) extends Module {
     val port = new OcpBurstMasterPort(32, 32, burstLength)
   })
 
-  val cntReg = Reg(init = UInt(0, width=32))
-  val dataReg = Reg(init = UInt(0, width=32))
-  val cntRead = Reg(init = UInt(0, width=3))
+  val cntReg = RegInit(init = 0.U(32.W))
+  val dataReg = RegInit(init = 0.U(32.W))
+  val cntRead = RegInit(init = 0.U(3.W))
   
   //debug(cntRead) does nothing in chisel3 (no proning in frontend of chisel3 anyway)
 
   io.port.M.Cmd := OcpCmd.IDLE
-  io.port.M.DataValid := Bits(0)
-  io.port.M.DataByteEn := Bits(15)
+  io.port.M.DataValid := 0.U
+  io.port.M.DataByteEn := 15.U
 
-  cntReg := cntReg + UInt(1)
+  cntReg := cntReg + 1.U
   switch(cntReg) {
-    is(UInt(1)) {
+    is(1.U) {
       io.port.M.Cmd := OcpCmd.WR
-      io.port.M.DataValid := Bits(1)
-      when (io.port.S.CmdAccept === Bits(0)) {
+      io.port.M.DataValid := 1.U
+      when (io.port.S.CmdAccept === 0.U) {
         cntReg := cntReg
       }
     }
-    is(UInt(2)) {
-      io.port.M.DataValid := Bits(1)
+    is(2.U) {
+      io.port.M.DataValid := 1.U
     }
-    is(UInt(3)) {
-      io.port.M.DataValid := Bits(1)
+    is(3.U) {
+      io.port.M.DataValid := 1.U
     }
     // now we should be on our last word - wait for DVA
-    is(UInt(4)) {
-      io.port.M.DataValid := Bits(1)
+    is(4.U) {
+      io.port.M.DataValid := 1.U
       when (io.port.S.Resp =/= OcpResp.DVA) {
         cntReg := cntReg
       }
       dataReg := io.port.S.Data
     }
-    is(UInt(5)) { io.port.M.Cmd := OcpCmd.IDLE }
-    is(UInt(6)) {
+    is(5.U) { io.port.M.Cmd := OcpCmd.IDLE }
+    is(6.U) {
       io.port.M.Cmd := OcpCmd.RD
-      when (io.port.S.CmdAccept === Bits(0)) {
+      when (io.port.S.CmdAccept === 0.U) {
         cntReg := cntReg
       }
     }
-    is(UInt(7)) {
+    is(7.U) {
       when (io.port.S.Resp === OcpResp.DVA) {
-        cntRead := cntRead + UInt(1)
+        cntRead := cntRead + 1.U
       }
     }
-    is(UInt(8)) {
+    is(8.U) {
       when (io.port.S.Resp === OcpResp.DVA) {
-        cntRead := cntRead + UInt(1)
+        cntRead := cntRead + 1.U
       }
     }
-    is(UInt(9)) {
+    is(9.U) {
        when (io.port.S.Resp === OcpResp.DVA) {
-        cntRead := cntRead + UInt(1)
+        cntRead := cntRead + 1.U
       }
     }
-    is(UInt(10)){
+    is(10.U){
        when (io.port.S.Resp === OcpResp.DVA) {
-        cntRead := cntRead + UInt(1)
+        cntRead := cntRead + 1.U
       }
     }
   }
 
-  io.port.M.Addr := (UInt(nr * 256) + cntReg)
+  io.port.M.Addr := ((nr * 256).U + cntReg)
 //  io.port.M.Addr := (dataReg).toBits()
-  io.port.M.Data := (UInt(nr * 256 * 16) + cntReg)
+  io.port.M.Data := ((nr * 256 * 16).U + cntReg)
 }
 
 /** A top level to test the arbiter */

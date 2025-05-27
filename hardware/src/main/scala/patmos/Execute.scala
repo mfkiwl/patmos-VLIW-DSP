@@ -8,14 +8,15 @@
 
 package patmos
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 
 import Constants._
 
 class Execute() extends Module {
   val io = IO(new ExecuteIO())
 
-  val enableCop = Wire(Bool(), true.B)
+  val enableCop = WireDefault(Bool(), true.B)
   io.ena_out := enableCop
 
   val exReg = Reg(new DecEx())
@@ -28,14 +29,13 @@ class Execute() extends Module {
   }
 
   def alu(func: UInt, op1: UInt, op2: UInt): UInt = {
-    val result = Wire(UInt(width = DATA_WIDTH))
-    val scaledOp1 = op1 << Mux(func === FUNC_SHADD2, UInt(2),
-                               Mux(func === FUNC_SHADD, UInt(1),
-                                   UInt(0)))
-    val sum = scaledOp1 + op2
+    val result = Wire(UInt(DATA_WIDTH.W))
+    val scaledOp1 = op1 << Mux(func === FUNC_SHADD2, 2.U,
+                               Mux(func === FUNC_SHADD, 1.U, 0.U))
+    val sum = scaledOp1.asUInt + op2
     result := sum // some default
     val shamt = op2(4, 0).asUInt
-    val srOp = Mux(func === FUNC_SRA, op1(DATA_WIDTH-1), UInt(0)) ## op1
+    val srOp = Mux(func === FUNC_SRA, op1(DATA_WIDTH-1), 0.U) ## op1
     // This kind of decoding of the ALU op in the EX stage is not efficient,
     // but we keep it for now to get something going soon.
     switch(func) {
@@ -56,24 +56,24 @@ class Execute() extends Module {
   def comp(func: UInt, op1: UInt, op2: UInt): Bool = {
     val op1s = op1.asSInt
     val op2s = op2.asSInt
-    val bitMsk = UInt(1) << op2(4, 0).asUInt
+    val bitMsk = 1.U << op2(4, 0).asUInt
     // Is this nicer than the switch?
     // Some of the comparison function (equ, subtract) could be shared
     val eq = op1 === op2
     val lt = op1s < op2s
     val ult = op1 < op2
-    MuxLookup(func.asUInt, Bool(false), Array(
+    MuxLookup(func.asUInt, false.B, Seq(
       (CFUNC_EQ,    eq),
       (CFUNC_NEQ,   !eq),
       (CFUNC_LT,    lt),
       (CFUNC_LE,    lt | eq),
       (CFUNC_ULT,   ult),
       (CFUNC_ULE,   ult | eq),
-      (CFUNC_BTEST, (op1 & bitMsk) =/= UInt(0))))
+      (CFUNC_BTEST, (op1 & bitMsk.asUInt) =/= 0.U)))
   }
 
   def pred(func: UInt, op1: Bool, op2: Bool): Bool = {
-    MuxLookup(func.asUInt, Bool(false), Array(
+    MuxLookup(func.asUInt, false.B, Seq(
       (PFUNC_OR, op1 | op2),
       (PFUNC_AND, op1 & op2),
       (PFUNC_XOR, op1 ^ op2),
@@ -82,25 +82,25 @@ class Execute() extends Module {
 
   // data forwarding
   val fwReg  = Reg(Vec(2*PIPE_COUNT, UInt(3.W)))
-  val fwSrcReg  = Reg(Vec(2*PIPE_COUNT, UInt(width = log2Up(PIPE_COUNT))))
+  val fwSrcReg  = Reg(Vec(2*PIPE_COUNT, UInt(log2Up(PIPE_COUNT).W)))
   val memResultDataReg = Reg(Vec(PIPE_COUNT, UInt(DATA_WIDTH.W)))
   val exResultDataReg  = Reg(Vec(PIPE_COUNT, UInt(DATA_WIDTH.W)))
-  val op = Wire(Vec(2*PIPE_COUNT, UInt(width = DATA_WIDTH)))
+  val op = Wire(Vec(2*PIPE_COUNT, UInt(DATA_WIDTH.W)))
 
   // precompute forwarding
   for (i <- 0 until 2*PIPE_COUNT) {
     fwReg(i) := "b000".U(3.W)
-    fwSrcReg(i) := UInt(0)
+    fwSrcReg(i) := 0.U
     for (k <- 0 until PIPE_COUNT) {
       when(io.decex.rsAddr(i) === io.memResult(k).addr && io.memResult(k).valid) {
         fwReg(i) := "b010".U(3.W)
-        fwSrcReg(i) := UInt(k)
+        fwSrcReg(i) := k.U
       }
     }
     for (k <- 0 until PIPE_COUNT) {
       when(io.decex.rsAddr(i) === io.exResult(k).addr && io.exResult(k).valid) {
         fwReg(i) := "b001".U(3.W)
-        fwSrcReg(i) := UInt(k)
+        fwSrcReg(i) := k.U
       }
     }    
   }
@@ -136,31 +136,31 @@ class Execute() extends Module {
 
   val doExecute = Wire(Vec(PIPE_COUNT, Bool()))
   for (i <- 0 until PIPE_COUNT) {
-    doExecute(i) := Mux(io.flush, Bool(false),
+    doExecute(i) := Mux(io.flush, false.B,
                         predReg(exReg.pred(i)(PRED_BITS-1, 0)) ^ exReg.pred(i)(PRED_BITS))
   }
 
   // return information
-  val retBaseReg = Reg(UInt(width = DATA_WIDTH))
-  val retOffReg = Reg(UInt(width = DATA_WIDTH))
+  val retBaseReg = Reg(UInt(DATA_WIDTH.W))
+  val retOffReg = Reg(UInt(DATA_WIDTH.W))
   val saveRetOff = Reg(Bool())
   val saveND = Reg(Bool())
 
   // exception return information
-  val excBaseReg = Reg(UInt(width = DATA_WIDTH))
-  val excOffReg = Reg(UInt(width = DATA_WIDTH))
+  val excBaseReg = Reg(UInt(DATA_WIDTH.W))
+  val excOffReg = Reg(UInt(DATA_WIDTH.W))
 
   // MS: maybe the multiplication should be in a local component?
 
   // multiplication result registers
-  val mulLoReg = Reg(UInt(width = DATA_WIDTH))
-  val mulHiReg = Reg(UInt(width = DATA_WIDTH))
+  val mulLoReg = Reg(UInt(DATA_WIDTH.W))
+  val mulHiReg = Reg(UInt(DATA_WIDTH.W))
 
   // multiplication pipeline registers
-  val mulLLReg    = Reg(UInt(width = DATA_WIDTH))
-  val mulLHReg    = Reg(SInt(width = DATA_WIDTH+1))
-  val mulHLReg    = Reg(SInt(width = DATA_WIDTH+1))
-  val mulHHReg    = Reg(UInt(width = DATA_WIDTH))
+  val mulLLReg    = Reg(UInt(DATA_WIDTH.W))
+  val mulLHReg    = Reg(SInt((DATA_WIDTH+1).W))
+  val mulHLReg    = Reg(SInt((DATA_WIDTH+1).W))
+  val mulHHReg    = Reg(UInt(DATA_WIDTH.W))
 
   val mulPipeReg = Reg(Bool())
 
@@ -183,8 +183,8 @@ class Execute() extends Module {
     mulHHReg := (op1H * op2H).asUInt
 
     val mulResult = (Cat(mulHHReg, mulLLReg).asSInt
-                     + Cat(mulHLReg, SInt(0, width = DATA_WIDTH/2)).asSInt
-                     + Cat(mulLHReg, SInt(0, width = DATA_WIDTH/2)).asSInt)
+                     + Cat(mulHLReg, 0.S((DATA_WIDTH/2).W)).asSInt
+                     + Cat(mulLHReg, 0.S((DATA_WIDTH/2).W)).asSInt)
 
     when(mulPipeReg) {
       mulHiReg := mulResult(2*DATA_WIDTH-1, DATA_WIDTH)
@@ -209,8 +209,8 @@ class Execute() extends Module {
     val compResult = comp(exReg.aluOp(i).func, op(2*i), op(2*i+1))
 
     val bcpyPs = predReg(exReg.aluOp(i).func(PRED_BITS-1, 0)) ^ exReg.aluOp(i).func(PRED_BITS);
-    val shiftedPs = ((UInt(0, DATA_WIDTH-1) ## bcpyPs) << op(2*i+1)(4, 0))(DATA_WIDTH-1, 0)
-    val maskedOp = op(2*i) & ~(UInt(1, width = DATA_WIDTH) << op(2*i+1)(4, 0))(DATA_WIDTH-1, 0)
+    val shiftedPs = ((0.U((DATA_WIDTH-1).W) ## bcpyPs) << op(2*i+1)(4, 0))(DATA_WIDTH-1, 0)
+    val maskedOp = op(2*i) & (~(1.U(DATA_WIDTH.W) << op(2*i+1)(4, 0))(DATA_WIDTH-1, 0)).asUInt
     val bcpyResult = maskedOp | shiftedPs
 
     // predicate operations
@@ -221,7 +221,7 @@ class Execute() extends Module {
     when((exReg.aluOp(i).isCmp || exReg.aluOp(i).isPred) && doExecute(i)) {
       predReg(exReg.predOp(i).dest) := Mux(exReg.aluOp(i).isCmp, compResult, predResult)
     }
-    predReg(0) := Bool(true)
+    predReg(0) := true.B
 
     // special registers
     when(exReg.aluOp(i).isMTS && doExecute(i)) {
@@ -233,7 +233,7 @@ class Execute() extends Module {
             predReg(j) := op(2*i)(j)
           }
           //predReg := op(2*i)(PRED_COUNT-1, 0)
-          predReg(0) := Bool(true)
+          predReg(0) := true.B
         }
         is(SPEC_SL) {
           mulLoReg := op(2*i)
@@ -262,10 +262,10 @@ class Execute() extends Module {
       }
     }
     val mfsResult = Wire(UInt())
-    mfsResult := UInt(0, DATA_WIDTH)
+    mfsResult := 0.U(DATA_WIDTH.W)
     switch(exReg.aluOp(i).func) {
       is(SPEC_FL) {
-        mfsResult := Cat(UInt(0, DATA_WIDTH-PRED_COUNT), predReg.asUInt()).asUInt()
+        mfsResult := Cat(0.U((DATA_WIDTH-PRED_COUNT).W), predReg.asUInt).asUInt
       }
       is(SPEC_SL) {
         mfsResult := mulLoReg
@@ -325,8 +325,8 @@ class Execute() extends Module {
   val doCallRet = (exReg.call || exReg.ret || exReg.brcf ||
                    exReg.xcall || exReg.xret) && doExecute(0)
 
-  val brcfOff = Mux(exReg.immOp(0), UInt(0), op(1).asUInt)
-  val callRetAddr = Mux(exReg.call || exReg.xcall, UInt(0),
+  val brcfOff = Mux(exReg.immOp(0), 0.U, op(1).asUInt)
+  val callRetAddr = Mux(exReg.call || exReg.xcall, 0.U,
                         Mux(exReg.brcf, brcfOff,
                             Mux(exReg.xret, excOffReg, retOffReg)))
 
@@ -371,7 +371,7 @@ class Execute() extends Module {
 
   // coprocessor handling
   if (COP_COUNT > 0) {
-    val copStartedReg = RegInit(Bool(false))
+    val copStartedReg = RegInit(false.B)
     io.copOut.map(_.defaults())
     when(!io.flush && doExecute(0)) {
       when(exReg.copOp.isCop) {
@@ -391,9 +391,9 @@ class Execute() extends Module {
         io.exmem.rd(0).data := io.copIn(exReg.copOp.copId).result
 
         when(io.ena_in) {
-          copStartedReg := Bool(true)
+          copStartedReg := true.B
           when(enableCop) {
-            copStartedReg := Bool(false)
+            copStartedReg := false.B
           }
         }
       }
@@ -417,8 +417,8 @@ class Execute() extends Module {
   }
 
   // reset at end to override any computations
-  when(reset) {
+  when(reset.asBool) {
     exReg.flush()
-    predReg(0) := Bool(true)
+    predReg(0) := true.B
   }
 }
